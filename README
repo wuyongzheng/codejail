@@ -1,0 +1,6 @@
+assumptions
+	x86-32
+	no swap
+	single thread
+	no ksm: /sys/kernel/mm/ksm/run = 0
+	no hugepage: /proc/sys/vm/nr_hugepages = 0
