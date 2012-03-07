@@ -6,6 +6,14 @@
 
 KNOB<string> KnobFuncs(KNOB_MODE_WRITEONCE, "pintool", "n", "x0x", "specify jail functions sep by comma");
 std::vector<string> funcs;
+int injail = 0;
+
+void OnWrite (ADDRINT addr)
+{
+	if (injail) {
+		printf("write %p\n", (void *)addr);
+	}
+}
 
 VOID Arg1Before(CHAR * name, ADDRINT size)
 {
@@ -43,6 +51,34 @@ void process_image (IMG img, VOID *v)
 		RTN_Close(freeRtn);
 		printf("hooked to free at 0x%x.\n", RTN_Address(freeRtn));
 	}
+}
+
+VOID Instruction(INS ins, VOID *v)
+{
+	if (INS_IsMemoryWrite(ins)) {
+		INS_InsertPredicatedCall(
+				ins, IPOINT_BEFORE, (AFUNPTR)OnWrite,
+				IARG_MEMORYWRITE_EA,
+				IARG_END);
+	}
+}
+
+void pre_call (void)
+{
+	if (injail ++) {
+		fprintf(stderr, "pre_call %d->%d\n, ignored.", injail-1, injail);
+		return;
+	}
+	fprintf(stderr, "pre_call.\n");
+}
+
+void post_call (void)
+{
+	if (-- injail) {
+		fprintf(stderr, "post_call %d->%d\n, ignored.", injail+1, injail);
+		return;
+	}
+	fprintf(stderr, "pos_call.\n");
 }
 
 void add_funcs (void)

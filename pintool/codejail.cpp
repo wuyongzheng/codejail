@@ -60,8 +60,8 @@ void pre_call (void)
 		struct shadow_page *page = pagetable[i];
 		if (page) {
 			if ((unsigned)i >= STACKMIN/PAGESIZE) {
-				memcpy((char *)(i << PAGESHIFT), page->data, PAGESIZE);
 				free(page);
+				pagetable[i] = NULL;
 				count_stack ++;
 			} else {
 				memcpy(swap->data, (char *)(i << PAGESHIFT), PAGESIZE);
@@ -97,7 +97,7 @@ void post_call (void)
 		}
 	}
 	free(swap);
-	fprintf(stderr, "pre_call. %d page swapped\n", count);
+	fprintf(stderr, "pos_call. %d page swapped\n", count);
 }
 
 VOID Routine(RTN rtn, VOID *v)
