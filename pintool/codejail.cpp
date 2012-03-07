@@ -13,10 +13,8 @@ struct shadow_page {
 	unsigned char data[PAGESIZE];
 };
 
-KNOB<string> KnobFuncName(KNOB_MODE_WRITEONCE, "pintool", "n", "x0x", "specify jail function name");
-KNOB<string> KnobFuncAddr(KNOB_MODE_WRITEONCE, "pintool", "a", "x0x", "specify jail function address");
-char *func_name = NULL;
-ADDRINT func_addr = 0;
+KNOB<string> KnobFuncs(KNOB_MODE_WRITEONCE, "pintool", "n", "x0x", "specify jail function names, sep by comma");
+std::vector<std::string> funcs;
 int injail = 0;
 struct shadow_page *pagetable[TABLESIZE];
 
@@ -38,37 +36,23 @@ VOID Instruction(INS ins, VOID *v)
 	}
 }
 
-void pre_call (void)
+void OnRecv (ADDRINT addr, ADDRINT size)
 {
-	struct shadow_page *swap = (struct shadow_page *)malloc(sizeof(struct shadow_page));
-	int i, count;
-
-	if (injail ++) {
-		fprintf(stderr, "pre_call %d->%d\n, ignored.", injail-1, injail);
-		return;
+	assert(injail == 0);
+	printf("recv %p+%d\n", (void *)addr, size);
+	for (unsigned int i = 0; i < size; i ++) {
+		if (pagetable[(unsigned long)(addr + i) >> PAGESHIFT] != NULL)
+			*(unsigned char *)(addr + i) = pagetable[(unsigned long)(addr + i) >> PAGESHIFT]->data[(unsigned long)(addr + i) % PAGESIZE];
 	}
-
-	for (i = count = 0; i < TABLESIZE; i ++) {
-		struct shadow_page *page = pagetable[i];
-		if (page) {
-			memcpy(swap->data, (char *)(i << PAGESHIFT), PAGESIZE);
-			memcpy((char *)(i << PAGESHIFT), page->data, PAGESIZE);
-			pagetable[i] = swap;
-			swap = page;
-			count ++;
-		}
-	}
-	free(swap);
-	fprintf(stderr, "pre_call. %d page swapped\n", count);
 }
 
-void post_call (void)
+void pre_call (void)
 {
 	struct shadow_page *swap = (struct shadow_page *)malloc(sizeof(struct shadow_page));
 	int i, count, count_stack;
 
-	if (-- injail) {
-		fprintf(stderr, "post_call %d->%d\n, ignored.", injail+1, injail);
+	if (injail ++) {
+		fprintf(stderr, "pre_call %d->%d\n, ignored.", injail-1, injail);
 		return;
 	}
 
@@ -92,13 +76,50 @@ void post_call (void)
 	fprintf(stderr, "pre_call. %d page swapped, %d discarded\n", count, count_stack);
 }
 
+void post_call (void)
+{
+	struct shadow_page *swap = (struct shadow_page *)malloc(sizeof(struct shadow_page));
+	int i, count, count_stack;
+
+	if (-- injail) {
+		fprintf(stderr, "post_call %d->%d\n, ignored.", injail+1, injail);
+		return;
+	}
+
+	for (i = count = count_stack = 0; i < TABLESIZE; i ++) {
+		struct shadow_page *page = pagetable[i];
+		if (page) {
+			memcpy(swap->data, (char *)(i << PAGESHIFT), PAGESIZE);
+			memcpy((char *)(i << PAGESHIFT), page->data, PAGESIZE);
+			pagetable[i] = swap;
+			swap = page;
+			count ++;
+		}
+	}
+	free(swap);
+	fprintf(stderr, "pre_call. %d page swapped\n", count);
+}
+
 VOID Routine(RTN rtn, VOID *v)
 {
-	if (RTN_Address(rtn) == func_addr || (func_name != NULL && strcmp(func_name, RTN_Name(rtn).c_str()) == 0)) {
-		fprintf(stderr, "hooked to %p\n", (void *)RTN_Address(rtn));
+	for (vector<string>::const_iterator fun = funcs.begin(); fun != funcs.end(); fun ++) {
+		//TODO check function specified by address
+		if (RTN_Name(rtn).compare(*fun) == 0) {
+			fprintf(stderr, "hooked to %s at %p\n", (*fun).c_str(), (void *)RTN_Address(rtn));
+			RTN_Open(rtn);
+			RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)pre_call, IARG_END);
+			RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)post_call, IARG_END);
+			RTN_Close(rtn);
+		}
+	}
+
+	if (RTN_Name(rtn) == "cj_recv") {
+		fprintf(stderr, "hooked to cj_recv at %p\n", (void *)RTN_Address(rtn));
 		RTN_Open(rtn);
-		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)pre_call, IARG_END);
-		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)post_call, IARG_END);
+		RTN_InsertCall(rtn, IPOINT_BEFORE, AFUNPTR(OnRecv),
+				IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+				IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+				IARG_END);
 		RTN_Close(rtn);
 	}
 }
@@ -108,21 +129,31 @@ VOID Usage ()
 	fprintf(stderr, "usage...\n");
 }
 
+void add_funcs (void)
+{
+	const char *str = KnobFuncs.Value().c_str();
+	const char *ptr1, *ptr2;
+
+	ptr1 = str;
+	ptr2 = strchr(ptr1, ',');
+	while (ptr2 != NULL) {
+		funcs.push_back(std::string(ptr1, ptr2 - ptr1));
+		ptr1 = ptr2 + 1;
+		ptr2 = strchr(ptr1, ',');
+	}
+	funcs.push_back(std::string(ptr1));
+}
+
 int main(int argc, char *argv[])
 {
+	PIN_InitSymbols();
 	if (PIN_Init(argc, argv)) {
 		Usage();
 		return 1;
 	}
 
-	if (KnobFuncName.Value().compare("x0x")) {
-		func_name = strdup(KnobFuncName.Value().c_str());
-	}
-	if (KnobFuncAddr.Value().compare("x0x")) {
-		sscanf(KnobFuncAddr.Value().c_str(), "%p", (void **)&func_addr);
-	}
+	add_funcs();
 
-	PIN_InitSymbols();
 	INS_AddInstrumentFunction(Instruction, 0);
 	RTN_AddInstrumentFunction(Routine, 0);
 

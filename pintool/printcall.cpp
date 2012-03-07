@@ -4,6 +4,9 @@
 #include <assert.h>
 #include "pin.H"
 
+KNOB<string> KnobFuncs(KNOB_MODE_WRITEONCE, "pintool", "n", "x0x", "specify jail functions sep by comma");
+std::vector<string> funcs;
+
 VOID Arg1Before(CHAR * name, ADDRINT size)
 {
 	printf("calling %s %d(0x%x)\n", name, size, size);
@@ -42,6 +45,21 @@ void process_image (IMG img, VOID *v)
 	}
 }
 
+void add_funcs (void)
+{
+	const char *str = KnobFuncs.Value().c_str();
+	const char *ptr1, *ptr2;
+
+	ptr1 = str;
+	ptr2 = strchr(ptr1, ',');
+	while (ptr2 != NULL) {
+		funcs.push_back(std::string(ptr1, ptr2 - ptr1));
+		ptr1 = ptr2 + 1;
+		ptr2 = strchr(ptr1, ',');
+	}
+	funcs.push_back(std::string(ptr1));
+}
+
 int main(int argc, char *argv[])
 {
 	PIN_InitSymbols();
@@ -49,6 +67,13 @@ int main(int argc, char *argv[])
 		printf("check usage.\n");
 		return 1;
 	}
+
+	add_funcs();
+
+//	std::vector<std::string>::const_iterator fun;
+//	for(fun=funcs.begin(); fun!=funcs.end(); fun++) {
+//		printf("%s\n", (*fun).c_str());
+//	}
 
 	IMG_AddInstrumentFunction(process_image, 0);
 	PIN_StartProgram();
