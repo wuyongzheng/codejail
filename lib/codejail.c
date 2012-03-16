@@ -19,16 +19,16 @@ int amijailed;
 int shmfd;
 void *stack_main, *stack_jail, *heap_main, *heap_jail;
 
-void child_send (const struct cj_message_header *message)
+static void child_send (const struct cj_message_header *message)
 {
 }
 
-void child_recv (const struct cj_message_header *message)
+static void child_recv (const struct cj_message_header *message)
 {
 	send(socks[1], message->sendrecv.addr, message->sendrecv.size, 0);
 }
 
-void child_jail (const struct cj_message_header *message)
+static void child_jail (const struct cj_message_header *message)
 {
 	uintptr_t (*func) (uintptr_t arg0, ...);
 	struct cj_message_header retmsg;
@@ -80,7 +80,7 @@ static unsigned long getbos (void)
 
 void jump_stack (unsigned long bos, unsigned long newbos);
 
-int do_child (void *arg)
+static int child_loop (void *arg)
 {
 	amijailed = 1;
 
@@ -144,7 +144,7 @@ int cj_create (void)
 		return 1;
 	}
 
-	if (clone(do_child, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS, NULL) == -1) {
+	if (clone(child_loop, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS, NULL) == -1) {
 		fprintf(stderr, "clone() failed.\n");
 		return 2;
 	}
@@ -165,10 +165,12 @@ int cj_recv (void *data, size_t size)
 {
 	struct cj_message_header message;
 
-	if (amijailed) {
-		fprintf(stderr, "callint cj_recv in jail.\n");
-		return 1;
-	}
+	assert(!amijailed);
+
+	/* only stack_main and heap_main need to be received */
+	if ((data < stack_main || data >= stack_main + MSTACK_SIZE) &&
+			(data < heap_main || data >= heap_main + MHEAP_SIZE))
+		return 0;
 
 	message.type = CJ_MT_RECV;
 	message.sendrecv.addr = data;
@@ -191,6 +193,16 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	va_list ap;
 	int i;
 
+	/* when using wrapper library, if jailed library function calls another
+	 * jailed library function, cj_jail will be used as well.
+	 * We need to let it call directly */
+	if (amijailed) {
+		typedef uintptr_t (*func8) (uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+				uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+		return ((func8)func)((&argc)[1], (&argc)[2], (&argc)[3], (&argc)[4],
+				(&argc)[5], (&argc)[6], (&argc)[7], (&argc)[8]);
+	}
+
 	message.type = CJ_MT_JAIL;
 	message.jail.func = (uintptr_t)func;
 	message.jail.argc = argc;
@@ -207,6 +219,8 @@ uintptr_t cj_jail (void *func, int argc, ...)
 int cj_destroy (void)
 {
 	struct cj_message_header message;
+
+	assert(!amijailed);
 	message.type = CJ_MT_EXIT;
 	send(socks[0], &message, sizeof(message), 0);
 	return 0;
