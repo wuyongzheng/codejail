@@ -20,3 +20,7 @@ runm:
 .PHONY: runh
 runh:
 	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} ./hooked-main
+
+.PHONY: clean
+clean:
+	rm test-main hooked-main libtest-lib.so libcodejail.so

@@ -6,7 +6,10 @@
 
 int main (void)
 {
-	cj_create(0, 0, NULL, 0, NULL);
+	const char const *jlibs[] = {"libtest-lib.so"};
+
+	cj_create(0, 0, NULL, 1, jlibs);
+	//cj_create(0, 0, NULL, 0, NULL);
 
 	{
 		char buff[100];
@@ -16,8 +19,8 @@ int main (void)
 	}
 
 	cj_jail(set_global, 1, 12345);
-	printf("test 2: global_int = %d\n", global_int);
-	printf("test 2: get_global() returns %d\n", cj_jail(get_global, 0));
+	printf("test 2: get_global() = %d\n", cj_jail(get_global, 0));
+	printf("test 2: *get_globalref() = %d\n", *(int *)cj_jail(get_globalref, 0));
 
 	{
 		char buff[100];

@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 
-int global_int;
-unsigned char global_buffer[64];
+static int global_int;
+static unsigned char global_buffer[64];
 
 void set_global (int val)
 {
@@ -12,6 +12,11 @@ void set_global (int val)
 int get_global (void)
 {
 	return global_int;
+}
+
+int *get_globalref (void)
+{
+	return &global_int;
 }
 
 void write_global (const unsigned char *data)
