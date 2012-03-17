@@ -8,8 +8,8 @@
 #define JSTACK_SIZE (16 * 1024)
 #define MHEAP_SIZE (1000 * 1024)
 #define JHEAP_SIZE (1000 * 1024)
-#define SHM_SIZE (MSTACK_SIZE+JSTACK_SIZE+MHEAP_SIZE+JHEAP_SIZE)
 #define MAX_ARGS 16
+#define MAX_MAP_SECTIONS 16
 
 enum cj_message_type {
 	CJ_MT_NULL,
@@ -42,7 +42,7 @@ struct cj_message_header {
 	};
 };
 
-int cj_create (void);
+int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs);
 int cj_recv (void *data, size_t size);
 int cj_send (void *data, size_t size);
 uintptr_t cj_jail (void *func, int argc, ...);

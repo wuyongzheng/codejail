@@ -6,7 +6,7 @@
 
 int main (void)
 {
-	cj_create();
+	cj_create(0, 0, NULL, 0, NULL);
 
 	{
 		char buff[100];

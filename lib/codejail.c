@@ -17,7 +17,152 @@
 int socks[2]; // socks[0] for parent, socks[1] for child
 int amijailed;
 int shmfd;
+struct map_section_struct {
+	void *ptr;
+	size_t size;
+	size_t offset;
+	const char *path; // the library path as in /proc/pid/maps
+	int isshared;
+} map_sections[MAX_MAP_SECTIONS]; // [0] is main, [1] is jail, [2..] are libs.
+int map_section_num;
 void *stack_main, *stack_jail, *heap_main, *heap_jail;
+
+static int shm_create (int mlibn, const char **mlibs, int jlibn, const char **jlibs)
+{
+	size_t shm_file_size = 0;
+
+	/* the first two sections are main stack+heap and jail stack+heap */
+	map_sections[0].offset = shm_file_size;
+	shm_file_size += map_sections[0].size = MSTACK_SIZE + MHEAP_SIZE;
+	map_sections[0].isshared = 0;
+	map_sections[0].path = "main_stack_heap";
+	map_sections[1].offset = shm_file_size;
+	shm_file_size += map_sections[1].size = JSTACK_SIZE + JHEAP_SIZE;
+	map_sections[1].isshared = 1;
+	map_sections[1].path = "jail_stack_heap";
+	map_section_num = 2;
+
+	{
+		FILE *fp = fopen("/proc/self/maps", "r");
+		char line[512];
+		char exe[256];
+		int len;
+
+		len = readlink("/proc/self/exe", exe, sizeof(exe));
+		assert(len > 0 && len < sizeof(exe));
+		exe[len] = '\0';
+
+		while (fgets(line, sizeof(line), fp)) {
+			unsigned long start, end;
+			int i, isshared;
+
+			if (strlen(line) > 0 && line[strlen(line) - 1] == '\n')
+				line[strlen(line) - 1] = '\0';
+
+			if (strstr(line, " rw-p ") == NULL)
+				continue;
+
+			/* 1. main exe is private. */
+			if (strstr(line, exe)) {
+				isshared = 0;
+				goto hit;
+			}
+			/* 2. mlib is private. */
+			for (i = 0; i < mlibn; i ++) {
+				if (strstr(line, mlibs[i])) {
+					isshared = 0;
+					goto hit;
+				}
+			}
+			/* 3. jlib is shared. */
+			for (i = 0; i < jlibn; i ++) {
+				if (strstr(line, jlibs[i])) {
+					isshared = 1;
+					goto hit;
+				}
+			}
+			continue;
+hit:
+			assert(map_section_num < MAX_MAP_SECTIONS);
+			sscanf(line, "%lx-%lx", &start, &end);
+			map_sections[map_section_num].ptr = (void *)start;
+			map_sections[map_section_num].size = end - start;
+			map_sections[map_section_num].offset = shm_file_size;
+			shm_file_size += map_sections[map_section_num].size;
+			map_sections[map_section_num].path = strdup(strrchr(line, ' ') + 1);
+			map_sections[map_section_num].isshared = isshared;
+			map_section_num ++;
+		}
+		fclose(fp);
+	}
+
+	shm_unlink("/cjshm");
+	shmfd = shm_open("/cjshm", O_RDWR | O_CREAT, 0666);
+	if (shmfd < 0) {
+		fprintf(stderr, "shm_open(/cjshm) failed\n");
+		return 1;
+	}
+	if (ftruncate(shmfd, shm_file_size)) {
+		fprintf(stderr, "ftruncate failed\n");
+		return 1;
+	}
+	map_sections[0].ptr = mmap(NULL, map_sections[0].size,
+			PROT_READ|PROT_WRITE, MAP_SHARED, shmfd,
+			map_sections[0].offset);
+	map_sections[1].ptr = mmap(NULL, map_sections[1].size,
+			PROT_READ|PROT_WRITE, MAP_SHARED, shmfd,
+			map_sections[1].offset);
+	if (map_sections[0].ptr == NULL || map_sections[1].ptr == NULL) {
+		fprintf(stderr, "mmap stack/heap failed\n");
+		return 1;
+	}
+	stack_main = map_sections[0].ptr;
+	heap_main = map_sections[0].ptr + MSTACK_SIZE;
+	stack_jail = map_sections[1].ptr;
+	heap_jail = map_sections[1].ptr + JSTACK_SIZE;
+
+	{
+		int i;
+		void *tmpbuf = NULL;
+		size_t tmpbuf_size = 0;
+		for (i = 2; i < map_section_num; i ++) {
+			fprintf(stderr, "remapping %p+0x%lx %s as %s\n",
+					map_sections[i].ptr, (unsigned long)map_sections[i].size,
+					map_sections[i].path,
+					map_sections[i].isshared ? "shared" : "private");
+			if (tmpbuf_size < map_sections[i].size) {
+				tmpbuf_size = map_sections[i].size;
+				if (tmpbuf)
+					free(tmpbuf);
+				tmpbuf = malloc(tmpbuf_size);
+			}
+			memcpy(tmpbuf, map_sections[i].ptr, map_sections[i].size);
+			munmap(map_sections[i].ptr, map_sections[i].size);
+			assert(mmap(map_sections[i].ptr, map_sections[i].size,
+						PROT_READ|PROT_WRITE, MAP_SHARED, shmfd,
+						map_sections[i].offset) == map_sections[i].ptr);
+			memcpy(map_sections[i].ptr, tmpbuf, map_sections[i].size);
+		}
+		if (tmpbuf)
+			free(tmpbuf);
+	}
+
+	return 0;
+}
+
+static int shm_remap (void)
+{
+	int i;
+	for (i = 0; i < map_section_num; i ++) {
+		if (map_sections[i].isshared)
+			continue;
+		munmap(map_sections[i].ptr, map_sections[i].size);
+		assert(mmap(map_sections[i].ptr, map_sections[i].size,
+					PROT_READ|PROT_WRITE, MAP_PRIVATE, shmfd,
+					map_sections[i].offset) == map_sections[i].ptr);
+	}
+	return 0;
+}
 
 static void child_send (const struct cj_message_header *message)
 {
@@ -33,22 +178,7 @@ static void child_jail (const struct cj_message_header *message)
 	uintptr_t (*func) (uintptr_t arg0, ...);
 	struct cj_message_header retmsg;
 
-	if (munmap(stack_main, MSTACK_SIZE)) {
-		fprintf(stderr, "munmap(stack_main) failed\n");
-		return;
-	}
-	if (mmap(stack_main, MSTACK_SIZE, PROT_READ|PROT_WRITE, MAP_PRIVATE, shmfd, 0) != stack_main) {
-		fprintf(stderr, "failed to remap stack_main to same address.\n");
-		return;
-	}
-	if (munmap(heap_main, MHEAP_SIZE)) {
-		fprintf(stderr, "munmap(heap_main) failed\n");
-		return;
-	}
-	if (mmap(heap_main, MHEAP_SIZE, PROT_READ|PROT_WRITE, MAP_PRIVATE, shmfd, MSTACK_SIZE + JSTACK_SIZE) != heap_main) {
-		fprintf(stderr, "failed to remap heap_main to same address.\n");
-		return;
-	}
+	assert(shm_remap() == 0);
 
 	func = (void *)message->jail.func;
 	retmsg.jreturn.retval = (*func)(message->jail.args[0], message->jail.args[1], message->jail.args[2], message->jail.args[3], message->jail.args[4], message->jail.args[5], message->jail.args[6]); //TODO
@@ -83,28 +213,15 @@ void jump_stack (unsigned long bos, unsigned long newbos);
 static int child_loop (void *arg)
 {
 	amijailed = 1;
+	// close(socks[0]); // cannot close because of CLONE_FILES
 
-	if (munmap(stack_main, MSTACK_SIZE)) {
-		fprintf(stderr, "munmap(stack_main) failed\n");
-		return 1;
-	}
-	if (mmap(stack_main, MSTACK_SIZE, PROT_READ|PROT_WRITE, MAP_PRIVATE, shmfd, 0) != stack_main) {
-		fprintf(stderr, "failed to remap stack_main to same address.\n");
-		return 1;
-	}
-	if (munmap(heap_main, MHEAP_SIZE)) {
-		fprintf(stderr, "munmap(heap_main) failed\n");
-		return 1;
-	}
-	if (mmap(heap_main, MHEAP_SIZE, PROT_READ|PROT_WRITE, MAP_PRIVATE, shmfd, MSTACK_SIZE + JSTACK_SIZE) != heap_main) {
-		fprintf(stderr, "failed to remap heap_main to same address.\n");
-		return 1;
-	}
+	assert(shm_remap() == 0);
+
 	cj_alloc_init();
 
 	while (1) {
 		struct cj_message_header message;
-		size_t message_size;
+		ssize_t message_size;
 
 		message_size = recv(socks[1], &message, sizeof(message), 0);
 		assert(message_size == sizeof(message));
@@ -118,31 +235,42 @@ static int child_loop (void *arg)
 	}
 }
 
-int cj_create (void)
+static void drop_jlib_exec(int jlibn, const char **jlibs)
+{
+	FILE *fp = fopen("/proc/self/maps", "r");
+	char line[512];
+
+	while (fgets(line, sizeof(line), fp)) {
+		int i;
+
+		if (strlen(line) > 0 && line[strlen(line) - 1] == '\n')
+			line[strlen(line) - 1] = '\0';
+
+		if (strstr(line, " r-xp ") == NULL)
+			continue;
+
+		for (i = 0; i < jlibn; i ++) {
+			if (strstr(line, jlibs[i])) {
+				unsigned long start, end;
+				sscanf(line, "%lx-%lx", &start, &end);
+				assert(mprotect((void *)start, end - start, PROT_READ) == 0); // if it fails, probably kernel is holding maps lock.
+				break;
+			}
+		}
+	}
+	fclose(fp);
+}
+
+
+int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks)) {
 		fprintf(stderr, "socketpair() failed.\n");
 		return 1;
 	}
 
-	shm_unlink("/cjshm");
-	shmfd = shm_open("/cjshm", O_RDWR | O_CREAT, 0666);
-	if (shmfd < 0) {
-		fprintf(stderr, "shm_open(/cjshm) failed\n");
+	if (shm_create(mlibn, mlibs, jlibn, jlibs))
 		return 1;
-	}
-	if (ftruncate(shmfd, SHM_SIZE)) {
-		fprintf(stderr, "ftruncate failed\n");
-		return 1;
-	}
-	stack_main = mmap(NULL, MSTACK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, shmfd, 0);
-	stack_jail = mmap(NULL, JSTACK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, shmfd, MSTACK_SIZE);
-	heap_main = mmap(NULL, MHEAP_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, shmfd, MSTACK_SIZE + JSTACK_SIZE);
-	heap_jail = mmap(NULL, JHEAP_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, shmfd, MSTACK_SIZE + JSTACK_SIZE + MHEAP_SIZE);
-	if (stack_main == NULL || stack_jail == NULL || heap_jail == NULL || heap_jail == NULL) {
-		fprintf(stderr, "mmap failed\n");
-		return 1;
-	}
 
 	if (clone(child_loop, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS, NULL) == -1) {
 		fprintf(stderr, "clone() failed.\n");
@@ -151,6 +279,9 @@ int cj_create (void)
 
 	// parent
 	amijailed = 0;
+	// close(socks[1]); // cannot close because CLONE_FILES
+	if (nxjlib)
+		drop_jlib_exec(jlibn, jlibs);
 	{
 		unsigned long oldbos = getbos();
 		oldbos = ((oldbos - 1) & 0xfffff000) + 4096; // round-up to page bound
