@@ -8,7 +8,7 @@ test-main: test-main.c libtest-lib.so
 	gcc -o test-main -Wall test-main.c -ltest-lib -L.
 
 libcodejail.so: codejail.c cjmalloc.c codejail-32.S
-	gcc -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so codejail.c cjmalloc.c codejail-32.S -lc -lrt -ldl
+	gcc -DUSE_PTHREAD_LOCK -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so codejail.c cjmalloc.c codejail-32.S -lc -lrt -ldl
 
 hooked-main: hooked-main.c libtest-lib.so libcodejail.so
 	gcc -g -o hooked-main -Wall hooked-main.c -ltest-lib -lcodejail -L.
