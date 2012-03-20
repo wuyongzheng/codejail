@@ -134,6 +134,12 @@ hit:
 	heap_main = map_sections[0].ptr + MSTACK_SIZE;
 	stack_jail = map_sections[1].ptr;
 	heap_jail = map_sections[1].ptr + JSTACK_SIZE;
+	fprintf(stderr, "main stack=%p-%p, heap=%p-%p\n",
+			stack_main, stack_main+MSTACK_SIZE,
+			heap_main, heap_main+MHEAP_SIZE);
+	fprintf(stderr, "jail stack=%p-%p, heap=%p-%p\n",
+			stack_jail, stack_jail+JSTACK_SIZE,
+			heap_jail, heap_jail+JHEAP_SIZE);
 
 	{
 		int i;
@@ -159,6 +165,7 @@ hit:
 		}
 		if (tmpbuf)
 			free(tmpbuf);
+		//for (i = 0; i < map_section_num; i ++) printf("%p+%x %x %s\n", map_sections[i].ptr, map_sections[i].size, map_sections[i].offset, map_sections[i].path);
 	}
 
 	return 0;
@@ -195,7 +202,11 @@ static void child_jail (const struct cj_message_header *message)
 	assert(shm_remap() == 0);
 
 	func = (void *)message->jail.func;
-	retmsg.jreturn.retval = (*func)(message->jail.args[0], message->jail.args[1], message->jail.args[2], message->jail.args[3], message->jail.args[4], message->jail.args[5], message->jail.args[6]); //TODO
+	retmsg.jreturn.retval = (*func)(
+			message->jail.args[0], message->jail.args[1], message->jail.args[2],
+			message->jail.args[3], message->jail.args[4], message->jail.args[5],
+			message->jail.args[6], message->jail.args[7], message->jail.args[8],
+			message->jail.args[9], message->jail.args[10], message->jail.args[11]); //FIXME
 	retmsg.type = CJ_MT_RETURN;
 	send(socks[1], &retmsg, sizeof(retmsg), 0);
 }
@@ -346,16 +357,18 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	 * We need to let it call directly */
 	if (amijailed) {
 		typedef uintptr_t (*func8) (uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-				uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+				uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+		assert(argc <= 9);
 		return ((func8)func)((&argc)[1], (&argc)[2], (&argc)[3], (&argc)[4],
-				(&argc)[5], (&argc)[6], (&argc)[7], (&argc)[8]);
+				(&argc)[5], (&argc)[6], (&argc)[7], (&argc)[8], (&argc)[9]);
 	}
 
+	assert(argc <= MAX_ARGS);
 	message.type = CJ_MT_JAIL;
 	message.jail.func = (uintptr_t)func;
 	message.jail.argc = argc;
 	va_start(ap, argc);
-	for (i = 0; i < argc && i < MAX_ARGS; i ++)
+	for (i = 0; i < argc; i ++)
 		message.jail.args[i] = va_arg(ap, uintptr_t);
 	va_end(ap);
 	lock_sock();
