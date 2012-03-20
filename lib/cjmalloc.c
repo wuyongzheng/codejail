@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 extern void *heap_main, *heap_jail;
-extern int amijailed;
+extern enum cj_state jailstate;
 struct cj_malloc_struct {
 	void *next;
 	void *end;
@@ -24,7 +24,7 @@ static void *call_orig_malloc (size_t size)
 
 void *malloc (size_t size)
 {
-	struct cj_malloc_struct *info = amijailed ? jail_malloc_info : main_malloc_info;
+	struct cj_malloc_struct *info = jailstate == CJS_JAIL ? jail_malloc_info : main_malloc_info;
 	void *ptr;
 
 	if (info == NULL)
@@ -82,7 +82,7 @@ void *realloc (void *ptr, size_t size)
 	if (size == 0)
 		return ptr;
 
-	info = amijailed ? jail_malloc_info : main_malloc_info;
+	info = jailstate == CJS_JAIL ? jail_malloc_info : main_malloc_info;
 	if (info == NULL)
 		return call_orig_realloc(ptr, size);
 
@@ -121,7 +121,7 @@ void cj_alloc_init (void)
 {
 	main_malloc_info = heap_main;
 	jail_malloc_info = heap_jail;
-	if (amijailed) {
+	if (jailstate == CJS_JAIL) {
 		jail_malloc_info->next = heap_jail + sizeof(*jail_malloc_info);
 		jail_malloc_info->end = heap_jail + JHEAP_SIZE;
 	} else {

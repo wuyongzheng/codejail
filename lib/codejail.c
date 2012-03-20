@@ -18,7 +18,7 @@
 #endif
 
 static int socks[2]; // socks[0] for parent, socks[1] for child
-int amijailed;
+enum cj_state jailstate;
 static int shmfd;
 static struct map_section_struct {
 	void *ptr;
@@ -191,7 +191,7 @@ static void child_send (const struct cj_message_header *message)
 
 static void child_recv (const struct cj_message_header *message)
 {
-	send(socks[1], message->sendrecv.addr, message->sendrecv.size, 0);
+	assert(send(socks[1], message->sendrecv.addr, message->sendrecv.size, 0) == message->sendrecv.size);
 }
 
 static void child_jail (const struct cj_message_header *message)
@@ -208,7 +208,7 @@ static void child_jail (const struct cj_message_header *message)
 			message->jail.args[6], message->jail.args[7], message->jail.args[8],
 			message->jail.args[9], message->jail.args[10], message->jail.args[11]); //FIXME
 	retmsg.type = CJ_MT_RETURN;
-	send(socks[1], &retmsg, sizeof(retmsg), 0);
+	assert(send(socks[1], &retmsg, sizeof(retmsg), 0) == sizeof(retmsg));
 }
 
 static unsigned long getbos (void)
@@ -237,7 +237,7 @@ void jump_stack (unsigned long bos, unsigned long newbos);
 
 static int child_loop (void *arg)
 {
-	amijailed = 1;
+	jailstate = CJS_JAIL;
 	// close(socks[0]); // cannot close because of CLONE_FILES
 
 	assert(shm_remap() == 0);
@@ -289,6 +289,8 @@ static void drop_jlib_exec(int jlibn, const char **jlibs)
 
 int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
+	assert(jailstate == CJS_UNINIT);
+
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks)) {
 		fprintf(stderr, "socketpair() failed.\n");
 		return 1;
@@ -303,7 +305,7 @@ int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char 
 	}
 
 	// parent
-	amijailed = 0;
+	jailstate = CJS_MAIN;
 	// close(socks[1]); // cannot close because CLONE_FILES
 	if (nxjlib)
 		drop_jlib_exec(jlibn, jlibs);
@@ -322,7 +324,9 @@ int cj_recv (void *data, size_t size)
 {
 	struct cj_message_header message;
 
-	assert(!amijailed);
+	assert(jailstate != CJS_UNINIT);
+	if (jailstate == CJS_JAIL)
+		return 0;
 
 	/* only stack_main and heap_main need to be received */
 	if ((data < stack_main || data >= stack_main + MSTACK_SIZE) &&
@@ -352,10 +356,11 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	va_list ap;
 	int i;
 
+	assert(jailstate != CJS_UNINIT);
 	/* when using wrapper library, if jailed library function calls another
 	 * jailed library function, cj_jail will be used as well.
 	 * We need to let it call directly */
-	if (amijailed) {
+	if (jailstate == CJS_JAIL) {
 		typedef uintptr_t (*func8) (uintptr_t, uintptr_t, uintptr_t, uintptr_t,
 				uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 		assert(argc <= 9);
@@ -372,8 +377,8 @@ uintptr_t cj_jail (void *func, int argc, ...)
 		message.jail.args[i] = va_arg(ap, uintptr_t);
 	va_end(ap);
 	lock_sock();
-	send(socks[0], &message, sizeof(message), 0);
-	recv(socks[0], &message, sizeof(message), 0);
+	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
+	assert(recv(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	unlock_sock();
 	assert(message.type == CJ_MT_RETURN);
 	return message.jreturn.retval;
@@ -383,8 +388,8 @@ int cj_destroy (void)
 {
 	struct cj_message_header message;
 
-	assert(!amijailed);
+	assert(jailstate == CJS_MAIN);
 	message.type = CJ_MT_EXIT;
-	send(socks[0], &message, sizeof(message), 0);
+	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	return 0;
 }

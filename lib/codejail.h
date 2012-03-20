@@ -20,6 +20,12 @@ enum cj_message_type {
 	CJ_MT_EXIT
 };
 
+enum cj_state {
+	CJS_UNINIT,
+	CJS_MAIN,
+	CJS_JAIL
+};
+
 struct pusha_registers {
 	uintptr_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
 };
