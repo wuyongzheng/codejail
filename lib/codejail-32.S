@@ -52,6 +52,31 @@ patch_finish:
 	popl    %ebp
 	ret
 
+	.globl  call_varg_func
+	.type   call_varg_func, @function
+# void *call_varg_func (void *func, int argc, const void **argv);
+call_varg_func:
+	pushl   %ebp
+	movl    %esp, %ebp
+	pushl   %ebx
+	movl    12(%ebp), %ecx  # ecx = argc
+	movl    16(%ebp), %ebx  # ebx = argv
+in1:
+	testl   %ecx, %ecx
+	jle out1
+	decl    %ecx
+	movl    (%ebx,%ecx,4), %edx
+	pushl   %edx
+	jmp in1
+out1:
+	call    *8(%ebp)
+	movl    12(%ebp), %ecx  # ecx = argc
+	leal    0(,%ecx,4),%edx
+	addl    %edx, %esp
+	popl    %ebx
+	popl    %ebp
+	ret
+
 # 	.globl	child_jail_entry
 # 	.type	child_jail_entry, @function
 # child_jail_entry:

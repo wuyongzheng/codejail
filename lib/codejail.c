@@ -17,6 +17,10 @@
 	#include <pthread.h>
 #endif
 
+/* from asm */
+extern void jump_stack (unsigned long bos, unsigned long newbos);
+extern void *call_varg_func (void *func, int argc, const void **argv);
+
 static int socks[2]; // socks[0] for parent, socks[1] for child
 enum cj_state jailstate;
 static int shmfd;
@@ -196,17 +200,14 @@ static void child_recv (const struct cj_message_header *message)
 
 static void child_jail (const struct cj_message_header *message)
 {
-	uintptr_t (*func) (uintptr_t arg0, ...);
 	struct cj_message_header retmsg;
 
 	assert(shm_remap() == 0);
 
-	func = (void *)message->jail.func;
-	retmsg.jreturn.retval = (*func)(
-			message->jail.args[0], message->jail.args[1], message->jail.args[2],
-			message->jail.args[3], message->jail.args[4], message->jail.args[5],
-			message->jail.args[6], message->jail.args[7], message->jail.args[8],
-			message->jail.args[9], message->jail.args[10], message->jail.args[11]); //FIXME
+	retmsg.jreturn.retval = (uintptr_t)call_varg_func(
+			(void *)message->jail.func,
+			message->jail.argc,
+			(const void **)message->jail.args);
 	retmsg.type = CJ_MT_RETURN;
 	assert(send(socks[1], &retmsg, sizeof(retmsg), 0) == sizeof(retmsg));
 }
@@ -232,8 +233,6 @@ static unsigned long getbos (void)
 	}
 	return atoll(ptr);
 }
-
-void jump_stack (unsigned long bos, unsigned long newbos);
 
 static int child_loop (void *arg)
 {
@@ -360,13 +359,8 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	/* when using wrapper library, if jailed library function calls another
 	 * jailed library function, cj_jail will be used as well.
 	 * We need to let it call directly */
-	if (jailstate == CJS_JAIL) {
-		typedef uintptr_t (*func8) (uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-				uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
-		assert(argc <= 9);
-		return ((func8)func)((&argc)[1], (&argc)[2], (&argc)[3], (&argc)[4],
-				(&argc)[5], (&argc)[6], (&argc)[7], (&argc)[8], (&argc)[9]);
-	}
+	if (jailstate == CJS_JAIL)
+		return (uintptr_t)call_varg_func(func, argc, (const void **)((&argc)+1));
 
 	assert(argc <= MAX_ARGS);
 	message.type = CJ_MT_JAIL;
