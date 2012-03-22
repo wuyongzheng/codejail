@@ -1,26 +1,39 @@
 .PHONY: all
-all: test-main hooked-main
+all: test-main hooked-main regres-main
+
+dlmalloc.o: dlmalloc.c
+	gcc -g -fPIC -DHAVE_MORECORE=1 -DMORECORE=cjsbrk -DNO_SEGMENT_TRAVERSAL=1 -DHAVE_MMAP=0 -DUSE_DL_PREFIX=1 -DONLY_MSPACES=1 -c -O3 -Wall dlmalloc.c
+
+libcodejail.so: codejail.c cjmalloc.c codejail-32.S dlmalloc.o
+	gcc -DUSE_PTHREAD_LOCK -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so codejail.c cjmalloc.c codejail-32.S dlmalloc.o -lc -lrt -ldl
+
+libregres.so: regres-lib.c libcodejail.so
+	gcc -shared -fPIC -Wall -Wl,-soname,libregres.so -o libregres.so regres-lib.c -lc
+
+regres-main: regres-main.c libregres.so libcodejail.so
+	gcc -g -o regres-main -Wall regres-main.c -lregres -lcodejail -L.
 
 libtest-lib.so: test-lib.c
 	gcc -shared -fPIC -Wall -Wl,-soname,libtest-lib.so -o libtest-lib.so test-lib.c -lc
 
-test-main: test-main.c libtest-lib.so
-	gcc -o test-main -Wall test-main.c -ltest-lib -L.
-
-libcodejail.so: codejail.c cjmalloc.c codejail-32.S
-	gcc -DUSE_PTHREAD_LOCK -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so codejail.c cjmalloc.c codejail-32.S -lc -lrt -ldl
-
 hooked-main: hooked-main.c libtest-lib.so libcodejail.so
 	gcc -g -o hooked-main -Wall hooked-main.c -ltest-lib -lcodejail -L.
 
+test-main: test-main.c libtest-lib.so
+	gcc -o test-main -Wall test-main.c -ltest-lib -L.
+
+.PHONY: runr
+runr: regres-main
+	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} ./regres-main
+
 .PHONY: runm
-runm:
+runm: test-main
 	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} ./test-main
 
 .PHONY: runh
-runh:
+runh: hooked-main
 	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} ./hooked-main
 
 .PHONY: clean
 clean:
-	rm test-main hooked-main libtest-lib.so libcodejail.so
+	rm test-main hooked-main libtest-lib.so libcodejail.so dlmalloc.o regres-main libregres.so

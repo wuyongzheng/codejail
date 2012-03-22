@@ -6,95 +6,82 @@
 #include <string.h>
 #include <stdio.h>
 
+#define ONLY_MSPACES 1
+#define USE_DL_PREFIX 1
+#include "dlmalloc.h"
+
 extern void *heap_main, *heap_jail;
 extern enum cj_state jailstate;
-struct cj_malloc_struct {
-	void *next;
-	void *end;
-};
-static struct cj_malloc_struct *main_malloc_info = 0, *jail_malloc_info = 0;
+struct cj_brk_info {
+	void *base;
+	void *curr;
+	void *top;
+	void *padding;
+} *brk_main, *brk_jail, *brk_default;
+mspace dlms_main, dlms_jail, dlms_default;
 
-static void *call_orig_malloc (size_t size)
+void *cjsbrk (intptr_t increment)
 {
-	static void *(*orig_malloc)(size_t) = NULL;
-	if (orig_malloc == NULL)
-		orig_malloc = dlsym(RTLD_NEXT, "malloc");
-	return orig_malloc(size);
+	void *prev = brk_default->curr;
+	if (prev + increment > brk_default->top || prev + increment < brk_default->base)
+		return (void *)(-1);
+	brk_default->curr += increment;
+	return prev;
 }
 
 void *malloc (size_t size)
 {
-	struct cj_malloc_struct *info = jailstate == CJS_JAIL ? jail_malloc_info : main_malloc_info;
-	void *ptr;
-
-	if (info == NULL)
-		return call_orig_malloc(size);
-
-	assert(size > 0);
-	size = ((size - 1) / 8 + 1) * 8; // padd to mutiple of 8 bytes
-
-	ptr = info->next;
-	info->next += size;
-	assert(info->next < info->end);
-	return ptr;
-}
-
-static void *call_orig_calloc (size_t nmemb, size_t size)
-{
-	static void *(*orig_calloc)(size_t, size_t) = NULL;
-
-	if (nmemb == 1 && size == 20) // workaround for infinite recursion of dlsym+calloc
-		return NULL;
-
-	if (orig_calloc == NULL)
-		orig_calloc = dlsym(RTLD_NEXT, "calloc");
-	return orig_calloc(nmemb, size);
+	if (brk_default == NULL) {
+		static void *(*orig_malloc)(size_t) = NULL;
+		if (orig_malloc == NULL)
+			orig_malloc = dlsym(RTLD_NEXT, "malloc");
+		return orig_malloc(size);
+	} else {
+		return mspace_malloc(dlms_default, size);
+	}
 }
 
 void *calloc (size_t nmemb, size_t size)
 {
-	void *ptr;
-
-	if (main_malloc_info == NULL)
-		return call_orig_calloc(nmemb, size);
-
-	ptr = malloc(nmemb * size);
-	memset(ptr, nmemb * size, 0);
-	return ptr;
-}
-
-static void *call_orig_realloc (void *ptr, size_t size)
-{
-	static void *(*orig_realloc)(void *, size_t) = NULL;
-
-	if (orig_realloc == NULL)
-		orig_realloc = dlsym(RTLD_NEXT, "realloc");
-	return orig_realloc(ptr, size);
+	if (brk_default == NULL) {
+		static void *(*orig_calloc)(size_t, size_t) = NULL;
+		if (nmemb == 1 && size == 20) // workaround for infinite recursion of dlsym+calloc
+			return NULL;
+		if (orig_calloc == NULL)
+			orig_calloc = dlsym(RTLD_NEXT, "calloc");
+		return orig_calloc(nmemb, size);
+	} else {
+		return mspace_calloc(dlms_default, nmemb, size);
+	}
 }
 
 void *realloc (void *ptr, size_t size)
 {
-	struct cj_malloc_struct *info;
-	void *newptr;
+	if (brk_default == NULL) {
+		static void *(*orig_realloc)(void *, size_t) = NULL;
+		if (orig_realloc == NULL)
+			orig_realloc = dlsym(RTLD_NEXT, "realloc");
+		return orig_realloc(ptr, size);
+	} else {
+		return mspace_realloc(dlms_default, ptr, size);
+	}
+}
 
-	if (ptr == NULL)
-		return malloc(size);
-	if (size == 0)
-		return ptr;
-
-	info = jailstate == CJS_JAIL ? jail_malloc_info : main_malloc_info;
-	if (info == NULL)
-		return call_orig_realloc(ptr, size);
-
-	newptr = malloc(size);
-	memmove(newptr, ptr, size);
-	return newptr;
+void *memalign (size_t alignment, size_t bytes)
+{
+	if (brk_default == NULL) {
+		static void *(*orig_memalign)(size_t, size_t) = NULL;
+		if (orig_memalign == NULL)
+			orig_memalign = dlsym(RTLD_NEXT, "memalign");
+		return orig_memalign(alignment, bytes);
+	} else {
+		return mspace_memalign(dlms_default, alignment, bytes);
+	}
 }
 
 static void call_orig_free (void *ptr)
 {
 	static void (*orig_free)(void *) = NULL;
-
 	if (orig_free == NULL)
 		orig_free = dlsym(RTLD_NEXT, "free");
 	orig_free(ptr);
@@ -102,30 +89,44 @@ static void call_orig_free (void *ptr)
 
 void free (void *ptr)
 {
-	if (ptr == NULL)
-		return;
-
-	if (main_malloc_info == NULL) { // before cj_alloc_init()
+	if (brk_default == NULL) { // before cj_alloc_init()
 		call_orig_free(ptr);
 		return;
 	}
 
-	if ((ptr < heap_main || ptr >= heap_main + MHEAP_SIZE) &&
-			(ptr < heap_jail || ptr >= heap_jail + JHEAP_SIZE)) {
+	if (ptr >= heap_main && ptr < heap_main + MHEAP_SIZE) {
+		if (jailstate == CJS_JAIL) {
+			fprintf(stderr, "jail trying to free main heap %p, ignored and leaked\n", ptr);
+			return;
+		}
+		mspace_free(dlms_main, ptr);
+	} else if (ptr >= heap_jail && ptr < heap_jail + JHEAP_SIZE) {
+		mspace_free(dlms_jail, ptr);
+	} else
 		call_orig_free(ptr);
-		return;
-	}
 }
 
 void cj_alloc_init (void)
 {
-	main_malloc_info = heap_main;
-	jail_malloc_info = heap_jail;
-	if (jailstate == CJS_JAIL) {
-		jail_malloc_info->next = heap_jail + sizeof(*jail_malloc_info);
-		jail_malloc_info->end = heap_jail + JHEAP_SIZE;
+	assert(jailstate != CJS_UNINIT);
+	assert(heap_main != NULL && heap_jail != NULL);
+	assert(brk_main == NULL && brk_jail == NULL);
+	assert(dlms_main == NULL && dlms_jail == NULL);
+	brk_main = heap_main;
+	brk_jail = heap_jail;
+	brk_default = jailstate == CJS_MAIN ? brk_main : brk_jail;
+	brk_default->base = heap_main + 4096;
+	brk_default->curr = heap_main + 4096;
+	brk_default->top =  heap_main + MHEAP_SIZE;
+	dlms_default = create_mspace_with_base(
+			brk_default->base + sizeof(struct cj_brk_info),
+			4096 - sizeof(struct cj_brk_info), 0);
+	printf("dlms_default=%p\n", dlms_default);
+	if (jailstate == CJS_MAIN) {
+		dlms_main = dlms_default;
+		dlms_jail = heap_jail + (dlms_main - heap_main); // assuming symmetry
 	} else {
-		main_malloc_info->next = heap_main + sizeof(*main_malloc_info);
-		main_malloc_info->end = heap_main + MHEAP_SIZE;
+		dlms_jail = dlms_default;
+		dlms_main = heap_main + (dlms_jail - heap_jail);
 	}
 }
