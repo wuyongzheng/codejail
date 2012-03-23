@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <time.h>
 
 static void presult (int n, int pass)
 {
@@ -62,7 +61,6 @@ int main (void)
 		void *arr[num];
 		int i;
 
-		//srand(time(NULL));
 		srand(1);
 		for (i = 0; i < num; i ++) {
 			arr[i] = malloc(rand() % 500 + 1);
@@ -77,6 +75,27 @@ int main (void)
 			}
 		}
 		presult(11, i == num);
+		for (i = 0; i < num; i ++)
+			free(arr[i]);
+
+		for (i = 0; i < num; i ++) {
+			arr[i] = (void *)cj_jail(malloc, 1, rand() % 500 + 1);
+			if (arr[i] == NULL)
+				break;
+			if (rand() % 2) {
+				int j = rand() % (i + 1);
+				if (rand() % 2)
+					free(arr[j]);
+				else
+					cj_jail(free, 1, arr[j]);
+				arr[j] = (void *)cj_jail(malloc, 1, rand() % 500 + 1);
+				if (arr[j] == NULL)
+					break;
+			}
+		}
+		presult(12, i == num);
+		for (i = 0; i < num; i ++)
+			free(arr[i]);
 	}
 
 	cj_destroy();

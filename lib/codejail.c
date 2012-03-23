@@ -360,8 +360,9 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	/* when using wrapper library, if jailed library function calls another
 	 * jailed library function, cj_jail will be used as well.
 	 * We need to let it call directly */
-	if (jailstate == CJS_JAIL)
+	if (jailstate == CJS_JAIL) {
 		return (uintptr_t)call_varg_func(func, argc, (const void **)((&argc)+1));
+	}
 
 	assert(argc <= MAX_ARGS);
 	message.type = CJ_MT_JAIL;
