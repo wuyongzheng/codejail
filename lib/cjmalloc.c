@@ -115,13 +115,12 @@ void cj_alloc_init (void)
 	brk_main = heap_main;
 	brk_jail = heap_jail;
 	brk_default = jailstate == CJS_MAIN ? brk_main : brk_jail;
-	brk_default->base = heap_main + 4096;
-	brk_default->curr = heap_main + 4096;
-	brk_default->top =  heap_main + MHEAP_SIZE;
+	brk_default->base = (void *)brk_default + 4096;
+	brk_default->curr = (void *)brk_default + 4096;
+	brk_default->top =  (void *)brk_default + MHEAP_SIZE;
 	dlms_default = create_mspace_with_base(
-			brk_default->base + sizeof(struct cj_brk_info),
+			(void *)brk_default + sizeof(struct cj_brk_info),
 			4096 - sizeof(struct cj_brk_info), 0);
-	printf("dlms_default=%p\n", dlms_default);
 	if (jailstate == CJS_MAIN) {
 		dlms_main = dlms_default;
 		dlms_jail = heap_jail + (dlms_main - heap_main); // assuming symmetry

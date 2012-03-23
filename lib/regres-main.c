@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 static void presult (int n, int pass)
 {
@@ -53,7 +54,29 @@ int main (void)
 		cj_jail(read_global, 1, buff);
 		presult(9, strcmp(buff, "foo8") == 0);
 		cj_recv(buff, 100);
-		presult(9, strcmp(buff, "foo7") == 0);
+		presult(10, strcmp(buff, "foo7") == 0);
+	}
+
+	{
+		const int num = 1000;
+		void *arr[num];
+		int i;
+
+		//srand(time(NULL));
+		srand(1);
+		for (i = 0; i < num; i ++) {
+			arr[i] = malloc(rand() % 500 + 1);
+			if (arr[i] == NULL)
+				break;
+			if (rand() % 2) {
+				int j = rand() % (i + 1);
+				free(arr[j]);
+				arr[j] = malloc(rand() % 500 + 1);
+				if (arr[j] == NULL)
+					break;
+			}
+		}
+		presult(11, i == num);
 	}
 
 	cj_destroy();
