@@ -20,7 +20,7 @@ enum cj_message_type {
 	CJ_MT_EXIT
 };
 
-enum cj_state {
+enum cj_state_enum {
 	CJS_UNINIT,
 	CJS_MAIN,
 	CJS_JAIL
@@ -48,11 +48,13 @@ struct cj_message_header {
 	};
 };
 
+extern enum cj_state_enum cj_state;
 int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs);
 int cj_recv (void *data, size_t size);
 int cj_send (void *data, size_t size);
 uintptr_t cj_jail (void *func, int argc, ...);
 int cj_destroy (void);
+FILE *cj_duplicate_file (FILE *fp);
 
 /* internal functions */
 void cj_alloc_init (void);

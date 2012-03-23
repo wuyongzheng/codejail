@@ -4,8 +4,8 @@ all: test-main hooked-main regres-main
 dlmalloc.o: dlmalloc.c
 	gcc -g -fPIC -DHAVE_MORECORE=1 -DMORECORE=cjsbrk -DNO_SEGMENT_TRAVERSAL=1 -DHAVE_MMAP=0 -DUSE_DL_PREFIX=1 -DONLY_MSPACES=1 -c -O3 -Wall dlmalloc.c
 
-libcodejail.so: codejail.c cjmalloc.c codejail-32.S dlmalloc.o
-	gcc -DUSE_PTHREAD_LOCK -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so codejail.c cjmalloc.c codejail-32.S dlmalloc.o -lc -lrt -ldl
+libcodejail.so: codejail.c cjmalloc.c refmon.c codejail-32.S dlmalloc.o
+	gcc -DUSE_PTHREAD_LOCK -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so codejail.c cjmalloc.c refmon.c codejail-32.S dlmalloc.o -lc -lrt -ldl
 
 libregres.so: regres-lib.c libcodejail.so
 	gcc -shared -fPIC -Wall -Wl,-soname,libregres.so -o libregres.so regres-lib.c -lc

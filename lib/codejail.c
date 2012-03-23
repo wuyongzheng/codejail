@@ -22,7 +22,7 @@ extern void jump_stack (unsigned long bos, unsigned long newbos);
 extern void *call_varg_func (void *func, int argc, const void **argv);
 
 static int socks[2]; // socks[0] for parent, socks[1] for child
-enum cj_state jailstate;
+enum cj_state_enum cj_state;
 static int shmfd;
 static struct map_section_struct {
 	void *ptr;
@@ -191,6 +191,7 @@ static int shm_remap (void)
 
 static void child_send (const struct cj_message_header *message)
 {
+	assert(recv(socks[1], message->sendrecv.addr, message->sendrecv.size, 0) == message->sendrecv.size);
 }
 
 static void child_recv (const struct cj_message_header *message)
@@ -236,7 +237,7 @@ static unsigned long getbos (void)
 
 static int child_loop (void *arg)
 {
-	jailstate = CJS_JAIL;
+	cj_state = CJS_JAIL;
 	// close(socks[0]); // cannot close because of CLONE_FILES
 
 	assert(shm_remap() == 0);
@@ -288,7 +289,7 @@ static void drop_jlib_exec(int jlibn, const char **jlibs)
 
 int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
-	if (jailstate != CJS_UNINIT)
+	if (cj_state != CJS_UNINIT)
 		return 0;
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks)) {
@@ -305,7 +306,7 @@ int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char 
 	}
 
 	// parent
-	jailstate = CJS_MAIN;
+	cj_state = CJS_MAIN;
 	// close(socks[1]); // cannot close because CLONE_FILES
 	if (nxjlib)
 		drop_jlib_exec(jlibn, jlibs);
@@ -324,8 +325,8 @@ int cj_recv (void *data, size_t size)
 {
 	struct cj_message_header message;
 
-	assert(jailstate != CJS_UNINIT);
-	if (jailstate == CJS_JAIL)
+	assert(cj_state != CJS_UNINIT);
+	if (cj_state == CJS_JAIL)
 		return 0;
 
 	/* only stack_main and heap_main need to be received */
@@ -346,7 +347,27 @@ int cj_recv (void *data, size_t size)
 
 int cj_send (void *data, size_t size)
 {
-	assert(0);
+	struct cj_message_header message;
+	int i;
+
+	assert(size > 0);
+	assert(cj_state != CJS_UNINIT);
+	if (cj_state == CJS_JAIL)
+		return 0;
+
+	// no need to send shared memory
+	for (i = 0; i < map_section_num; i ++)
+		if (data >= map_sections[i].ptr && data < map_sections[i].ptr + map_sections[i].size)
+			return 0;
+
+	message.type = CJ_MT_SEND;
+	message.sendrecv.addr = data;
+	message.sendrecv.size = size;
+	lock_sock();
+	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
+	assert(send(socks[0], data, size, 0) == size);
+	unlock_sock();
+
 	return 0;
 }
 
@@ -356,11 +377,11 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	va_list ap;
 	int i;
 
-	assert(jailstate != CJS_UNINIT);
+	assert(cj_state != CJS_UNINIT);
 	/* when using wrapper library, if jailed library function calls another
 	 * jailed library function, cj_jail will be used as well.
 	 * We need to let it call directly */
-	if (jailstate == CJS_JAIL) {
+	if (cj_state == CJS_JAIL) {
 		return (uintptr_t)call_varg_func(func, argc, (const void **)((&argc)+1));
 	}
 
@@ -384,7 +405,7 @@ int cj_destroy (void)
 {
 	struct cj_message_header message;
 
-	assert(jailstate == CJS_MAIN);
+	assert(cj_state == CJS_MAIN);
 	message.type = CJ_MT_EXIT;
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	return 0;

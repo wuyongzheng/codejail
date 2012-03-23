@@ -11,7 +11,6 @@
 #include "dlmalloc.h"
 
 extern void *heap_main, *heap_jail;
-extern enum cj_state jailstate;
 struct cj_brk_info {
 	void *base;
 	void *curr;
@@ -95,7 +94,7 @@ void free (void *ptr)
 	}
 
 	if (ptr >= heap_main && ptr < heap_main + MHEAP_SIZE) {
-		if (jailstate == CJS_JAIL) {
+		if (cj_state == CJS_JAIL) {
 			fprintf(stderr, "jail trying to free main heap %p, ignored and leaked\n", ptr);
 			return;
 		}
@@ -108,20 +107,20 @@ void free (void *ptr)
 
 void cj_alloc_init (void)
 {
-	assert(jailstate != CJS_UNINIT);
+	assert(cj_state != CJS_UNINIT);
 	assert(heap_main != NULL && heap_jail != NULL);
 	assert(brk_main == NULL && brk_jail == NULL);
 	assert(dlms_main == NULL && dlms_jail == NULL);
 	brk_main = heap_main;
 	brk_jail = heap_jail;
-	brk_default = jailstate == CJS_MAIN ? brk_main : brk_jail;
+	brk_default = cj_state == CJS_MAIN ? brk_main : brk_jail;
 	brk_default->base = (void *)brk_default + 4096;
 	brk_default->curr = (void *)brk_default + 4096;
 	brk_default->top =  (void *)brk_default + MHEAP_SIZE;
 	dlms_default = create_mspace_with_base(
 			(void *)brk_default + sizeof(struct cj_brk_info),
 			4096 - sizeof(struct cj_brk_info), 0);
-	if (jailstate == CJS_MAIN) {
+	if (cj_state == CJS_MAIN) {
 		dlms_main = dlms_default;
 		dlms_jail = heap_jail + (dlms_main - heap_main); // assuming symmetry
 	} else {
