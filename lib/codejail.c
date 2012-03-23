@@ -288,7 +288,8 @@ static void drop_jlib_exec(int jlibn, const char **jlibs)
 
 int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
-	assert(jailstate == CJS_UNINIT);
+	if (jailstate != CJS_UNINIT)
+		return 0;
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks)) {
 		fprintf(stderr, "socketpair() failed.\n");
