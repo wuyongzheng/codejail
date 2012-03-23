@@ -286,6 +286,15 @@ static void drop_jlib_exec(int jlibn, const char **jlibs)
 	fclose(fp);
 }
 
+enum cj_memtype_enum cj_memtype (void *addr)
+{
+	int i;
+
+	for (i = 0; i < map_section_num; i ++)
+		if (addr >= map_sections[i].ptr && addr < map_sections[i].ptr + map_sections[i].size)
+			return map_sections[i].isshared ? CJMT_SHARED : CJMT_PRIVATE;
+	return CJMT_ISOLATED;
+}
 
 int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
@@ -348,7 +357,6 @@ int cj_recv (void *data, size_t size)
 int cj_send (void *data, size_t size)
 {
 	struct cj_message_header message;
-	int i;
 
 	assert(size > 0);
 	assert(cj_state != CJS_UNINIT);
@@ -356,9 +364,8 @@ int cj_send (void *data, size_t size)
 		return 0;
 
 	// no need to send shared memory
-	for (i = 0; i < map_section_num; i ++)
-		if (data >= map_sections[i].ptr && data < map_sections[i].ptr + map_sections[i].size)
-			return 0;
+	if (cj_memtype(data) != CJMT_ISOLATED)
+		return 0;
 
 	message.type = CJ_MT_SEND;
 	message.sendrecv.addr = data;

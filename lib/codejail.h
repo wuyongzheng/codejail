@@ -26,6 +26,12 @@ enum cj_state_enum {
 	CJS_JAIL
 };
 
+enum cj_memtype_enum {
+	CJMT_ISOLATED,
+	CJMT_PRIVATE,
+	CJMT_SHARED
+};
+
 struct pusha_registers {
 	uintptr_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
 };
@@ -48,13 +54,16 @@ struct cj_message_header {
 	};
 };
 
-extern enum cj_state_enum cj_state;
 int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs);
 int cj_recv (void *data, size_t size);
 int cj_send (void *data, size_t size);
 uintptr_t cj_jail (void *func, int argc, ...);
 int cj_destroy (void);
 FILE *cj_duplicate_file (FILE *fp);
+enum cj_memtype_enum cj_memtype (void *addr);
+extern enum cj_state_enum cj_state;
+// use cj_get_state() instead of cj_state to prevent accidentally change cj_state
+static inline enum cj_state_enum cj_get_state (void) {return cj_state;}
 
 /* internal functions */
 void cj_alloc_init (void);

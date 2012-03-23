@@ -28,7 +28,7 @@ FILE *cj_duplicate_file (FILE *fp)
 	}
 	fdj = dup(fdm);
 
-	assert((fp->_flags & 0xffff000) == _IO_MAGIC);
+	assert((fp->_flags & 0xffff0000) == _IO_MAGIC);
 	switch (fp->_flags & 0xc) {
 		case 0: mode = "w+"; break;
 		case _IO_NO_WRITES: mode = "r"; break;
