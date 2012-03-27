@@ -330,6 +330,15 @@ int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char 
 	return 0;
 }
 
+int hookmain (
+		int (*origmain)(int, char **, char **),
+		int argc, char **argv, char **envp)
+{
+	fprintf(stderr, "hookmain(%p, %d, %p, %p)\n", origmain, argc, argv, envp);
+	cj_create(0, 0, NULL, 0, NULL); //TODO use env to get jlibs
+	return origmain(argc, argv, envp);
+}
+
 int cj_recv (void *data, size_t size)
 {
 	struct cj_message_header message;

@@ -1,3 +1,10 @@
+	.local  origmain
+	.comm   origmain,4,4
+
+	.section .rodata
+dlsymstr:
+	.string "__libc_start_main"
+
 	.text
 
 	.globl  jump_stack
@@ -76,6 +83,43 @@ out1:
 	popl    %ebx
 	popl    %ebp
 	ret
+
+	.local  mymainstub
+	.type   mymainstub, @function
+mymainstub:
+	movl    12(%esp), %eax
+	pushl   %eax
+	movl    12(%esp), %eax
+	pushl   %eax
+	movl    12(%esp), %eax
+	pushl   %eax
+	movl    origmain, %eax
+    pushl   %eax
+	call    hookmain
+	addl    $16, %esp
+	ret
+
+	.globl  __libc_start_main
+	.type   __libc_start_main, @function
+# extern int BP_SYM (__libc_start_main) (int (*main) (int, char **, char **),
+#     int argc,
+#     char *__unbounded *__unbounded ubp_av,
+#     void (*init) (void),
+#     void (*fini) (void),
+#     void (*rtld_fini) (void),
+#     void *__unbounded stack_end)
+# __attribute__ ((noreturn));
+__libc_start_main:
+	movl    4(%esp), %eax
+	movl    %eax, origmain
+	movl    $mymainstub, %eax
+	movl    %eax, 4(%esp)
+	pushl   $dlsymstr
+	pushl   $-1
+	call    dlsym
+	addl    $8, %esp
+#	movl    $0, (0)
+	jmp     *%eax
 
 # 	.globl	child_jail_entry
 # 	.type	child_jail_entry, @function
