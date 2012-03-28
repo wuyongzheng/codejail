@@ -24,7 +24,7 @@ test-main: test-main.c libtest-lib.so
 
 .PHONY: runr
 runr: regres-main
-	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} ./regres-main
+	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} CJJLIBS=libregres.so ./regres-main
 
 .PHONY: runm
 runm: test-main

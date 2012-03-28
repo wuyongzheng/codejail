@@ -278,6 +278,7 @@ static void drop_jlib_exec(int jlibn, const char **jlibs)
 			if (strstr(line, jlibs[i])) {
 				unsigned long start, end;
 				sscanf(line, "%lx-%lx", &start, &end);
+				printf("drop exec %s@%p-%p\n", jlibs[i], (void *)start, (void *)end);
 				assert(mprotect((void *)start, end - start, PROT_READ) == 0); // if it fails, probably kernel is holding maps lock.
 				break;
 			}
@@ -328,15 +329,6 @@ int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char 
 	init_sock_lock();
 
 	return 0;
-}
-
-int hookmain (
-		int (*origmain)(int, char **, char **),
-		int argc, char **argv, char **envp)
-{
-	fprintf(stderr, "hookmain(%p, %d, %p, %p)\n", origmain, argc, argv, envp);
-	cj_create(0, 0, NULL, 0, NULL); //TODO use env to get jlibs
-	return origmain(argc, argv, envp);
 }
 
 int cj_recv (void *data, size_t size)
@@ -417,12 +409,44 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	return message.jreturn.retval;
 }
 
-int cj_destroy (void)
+void cj_destroy (void)
 {
 	struct cj_message_header message;
 
 	assert(cj_state == CJS_MAIN);
 	message.type = CJ_MT_EXIT;
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
-	return 0;
+}
+
+int hookmain (
+		int (*origmain)(int, char **, char **),
+		int argc, char **argv, char **envp)
+{
+	char *mlibs[10], *jlibs[10], *env, *lib;
+	int mlibn = 0, jlibn = 0, nx = 0, i;
+
+	fprintf(stderr, "hookmain(%p, %d, %p, %p)\n", origmain, argc, argv, envp);
+
+	if ((env = getenv("CJMLIBS")) != NULL) {
+		env = strdup(env);
+		for (lib = strtok(env, ","); lib != NULL; lib = strtok(NULL, ","))
+			mlibs[mlibn ++] = strdup(lib);
+		free(env);
+	}
+	if ((env = getenv("CJJLIBS")) != NULL) {
+		env = strdup(env);
+		for (lib = strtok(env, ","); lib != NULL; lib = strtok(NULL, ","))
+			jlibs[jlibn ++] = strdup(lib);
+		free(env);
+	}
+	if ((env = getenv("CJNX")) != NULL)
+		nx = strcmp(env, "1") == 0;
+	cj_create(nx, mlibn, (const char **)mlibs, jlibn, (const char **)jlibs);
+	for (i = 0; i < mlibn; i ++)
+		free(mlibs[i]);
+	for (i = 0; i < jlibn; i ++)
+		free(jlibs[i]);
+
+	atexit(cj_destroy);
+	return origmain(argc, argv, envp);
 }

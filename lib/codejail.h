@@ -58,7 +58,7 @@ int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char 
 int cj_recv (void *data, size_t size);
 int cj_send (void *data, size_t size);
 uintptr_t cj_jail (void *func, int argc, ...);
-int cj_destroy (void);
+void cj_destroy (void);
 FILE *cj_duplicate_file (FILE *fp);
 enum cj_memtype_enum cj_memtype (void *addr);
 extern enum cj_state_enum cj_state;
