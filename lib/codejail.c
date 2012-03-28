@@ -442,6 +442,7 @@ int hookmain (
 	if ((env = getenv("CJNX")) != NULL)
 		nx = strcmp(env, "1") == 0;
 	cj_create(nx, mlibn, (const char **)mlibs, jlibn, (const char **)jlibs);
+	assert(cj_state == CJS_MAIN);
 	for (i = 0; i < mlibn; i ++)
 		free(mlibs[i]);
 	for (i = 0; i < jlibn; i ++)

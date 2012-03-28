@@ -22,8 +22,12 @@ mspace dlms_main, dlms_jail, dlms_default;
 void *cjsbrk (intptr_t increment)
 {
 	void *prev = brk_default->curr;
-	if (prev + increment > brk_default->top || prev + increment < brk_default->base)
+	if (prev + increment > brk_default->top || prev + increment < brk_default->base) {
+		fprintf(stderr, "Out of memory. base=%p, curr=%p, top=%p, increment=%d\n",
+				brk_default->base, brk_default->curr,
+				brk_default->top, (int)increment);
 		return (void *)(-1);
+	}
 	brk_default->curr += increment;
 	return prev;
 }
@@ -142,7 +146,7 @@ void cj_alloc_init (void)
 	brk_default->top =  (void *)brk_default + MHEAP_SIZE;
 	dlms_default = create_mspace_with_base(
 			(void *)brk_default + sizeof(struct cj_brk_info),
-			4096 - sizeof(struct cj_brk_info), 0);
+			4096 - sizeof(struct cj_brk_info), 1);
 	if (cj_state == CJS_MAIN) {
 		dlms_main = dlms_default;
 		dlms_jail = heap_jail + (dlms_main - heap_main); // assuming symmetry
