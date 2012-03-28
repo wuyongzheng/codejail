@@ -36,7 +36,9 @@ void *malloc (size_t size)
 			orig_malloc = dlsym(RTLD_NEXT, "malloc");
 		return orig_malloc(size);
 	} else {
-		return mspace_malloc(dlms_default, size);
+		void *ptr = mspace_malloc(dlms_default, size);
+		assert(ptr >= brk_default->base && ptr < brk_default->top);
+		return ptr;
 	}
 }
 
@@ -50,19 +52,39 @@ void *calloc (size_t nmemb, size_t size)
 			orig_calloc = dlsym(RTLD_NEXT, "calloc");
 		return orig_calloc(nmemb, size);
 	} else {
-		return mspace_calloc(dlms_default, nmemb, size);
+		void *ptr = mspace_calloc(dlms_default, nmemb, size);
+		assert(ptr >= brk_default->base && ptr < brk_default->top);
+		return ptr;
 	}
 }
 
 void *realloc (void *ptr, size_t size)
 {
+	static void *(*orig_realloc)(void *, size_t) = NULL;
+
 	if (brk_default == NULL) {
-		static void *(*orig_realloc)(void *, size_t) = NULL;
 		if (orig_realloc == NULL)
 			orig_realloc = dlsym(RTLD_NEXT, "realloc");
 		return orig_realloc(ptr, size);
 	} else {
-		return mspace_realloc(dlms_default, ptr, size);
+		void *newptr;
+		if (ptr >= heap_main && ptr < heap_main + MHEAP_SIZE) {
+			assert(cj_state == CJS_MAIN); // I don't what to do if jail realloc main's malloc
+			newptr = mspace_realloc(dlms_main, ptr, size);
+			assert(newptr >= brk_main->base && newptr < brk_main->top);
+		} else if (ptr >= heap_jail && ptr < heap_jail + JHEAP_SIZE) {
+			// main is allowed to realloc jail's malloc, but
+			// I can't just call mspace_realloc directly, because
+			// cjsbrk will allocate heap in main.
+			assert(cj_state == CJS_JAIL);
+			newptr = mspace_realloc(dlms_jail, ptr, size);
+			assert(newptr >= brk_jail->base && newptr < brk_jail->top);
+		} else {
+			if (orig_realloc == NULL)
+				orig_realloc = dlsym(RTLD_NEXT, "realloc");
+			newptr = orig_realloc(ptr, size);
+		}
+		return newptr;
 	}
 }
 
@@ -74,22 +96,20 @@ void *memalign (size_t alignment, size_t bytes)
 			orig_memalign = dlsym(RTLD_NEXT, "memalign");
 		return orig_memalign(alignment, bytes);
 	} else {
-		return mspace_memalign(dlms_default, alignment, bytes);
+		void *ptr = mspace_memalign(dlms_default, alignment, bytes);
+		assert(ptr >= brk_default->base && ptr < brk_default->top);
+		return ptr;
 	}
-}
-
-static void call_orig_free (void *ptr)
-{
-	static void (*orig_free)(void *) = NULL;
-	if (orig_free == NULL)
-		orig_free = dlsym(RTLD_NEXT, "free");
-	orig_free(ptr);
 }
 
 void free (void *ptr)
 {
+	static void (*orig_free)(void *) = NULL;
+
 	if (brk_default == NULL) { // before cj_alloc_init()
-		call_orig_free(ptr);
+		if (orig_free == NULL)
+			orig_free = dlsym(RTLD_NEXT, "free");
+		orig_free(ptr);
 		return;
 	}
 
@@ -101,8 +121,11 @@ void free (void *ptr)
 		mspace_free(dlms_main, ptr);
 	} else if (ptr >= heap_jail && ptr < heap_jail + JHEAP_SIZE) {
 		mspace_free(dlms_jail, ptr);
-	} else
-		call_orig_free(ptr);
+	} else {
+		if (orig_free == NULL)
+			orig_free = dlsym(RTLD_NEXT, "free");
+		orig_free(ptr);
+	}
 }
 
 void cj_alloc_init (void)
@@ -114,7 +137,7 @@ void cj_alloc_init (void)
 	brk_main = heap_main;
 	brk_jail = heap_jail;
 	brk_default = cj_state == CJS_MAIN ? brk_main : brk_jail;
-	brk_default->base = (void *)brk_default + 4096;
+	brk_default->base = (void *)brk_default;
 	brk_default->curr = (void *)brk_default + 4096;
 	brk_default->top =  (void *)brk_default + MHEAP_SIZE;
 	dlms_default = create_mspace_with_base(
