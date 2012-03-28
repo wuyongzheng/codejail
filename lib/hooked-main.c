@@ -6,11 +6,6 @@
 
 int main (void)
 {
-	const char const *jlibs[] = {"libtest-lib.so"};
-
-	cj_create(0, 0, NULL, 1, jlibs);
-	//cj_create(0, 0, NULL, 0, NULL);
-
 	{
 		char buff[100];
 		strcpy(buff, "abc");
@@ -35,8 +30,6 @@ int main (void)
 //		cj_jail(set_global, 1, 12345);
 //		cj_jail(get_global, 0);
 //	}
-
-	cj_destroy();
 
 	return 0;
 }

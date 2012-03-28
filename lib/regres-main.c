@@ -11,10 +11,6 @@ static void presult (int n, int pass)
 
 int main (void)
 {
-	const char const *jlibs[] = {"libregres.so"};
-
-	cj_create(0, 0, NULL, 1, jlibs);
-
 	{
 		char buff[100];
 		strcpy(buff, "abc");
@@ -97,8 +93,6 @@ int main (void)
 		for (i = 0; i < num; i ++)
 			free(arr[i]);
 	}
-
-	cj_destroy();
 
 	return 0;
 }

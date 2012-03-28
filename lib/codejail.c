@@ -297,10 +297,9 @@ enum cj_memtype_enum cj_memtype (void *addr)
 	return CJMT_ISOLATED;
 }
 
-int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
+static int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
-	if (cj_state != CJS_UNINIT)
-		return 0;
+	assert(cj_state == CJS_UNINIT);
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks)) {
 		fprintf(stderr, "socketpair() failed.\n");
@@ -409,7 +408,7 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	return message.jreturn.retval;
 }
 
-void cj_destroy (void)
+static void cj_destroy (void)
 {
 	struct cj_message_header message;
 

@@ -32,7 +32,7 @@ runm: test-main
 
 .PHONY: runh
 runh: hooked-main
-	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} ./hooked-main
+	env LD_LIBRARY_PATH=.:${LD_LIBRARY_PATH} CJJLIBS=libtest-lib.so ./hooked-main
 
 .PHONY: clean
 clean:
