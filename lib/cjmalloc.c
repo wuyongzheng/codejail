@@ -1,34 +1,29 @@
 #define _GNU_SOURCE
-#include "codejail.h"
 #include <dlfcn.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "codejail-int.h"
 
 #define ONLY_MSPACES 1
 #define USE_DL_PREFIX 1
 #include "dlmalloc.h"
 
 extern void *heap_main, *heap_jail;
-struct cj_brk_info {
+static struct cj_brk_info {
 	void *base;
 	void *curr;
 	void *top;
 	void *padding;
 } *brk_main, *brk_jail, *brk_default;
-mspace dlms_main, dlms_jail, dlms_default;
+static mspace dlms_main, dlms_jail, dlms_default;
 
 void *cjsbrk (intptr_t increment)
 {
 	void *prev = brk_default->curr;
-	if (prev + increment > brk_default->top || prev + increment < brk_default->base) {
-		fprintf(stderr, "Out of memory. base=%p, curr=%p, top=%p, increment=%d\n",
-				brk_default->base, brk_default->curr,
-				brk_default->top, (int)increment);
-		return (void *)(-1);
-	}
 	brk_default->curr += increment;
+	assert(brk_default->curr <= brk_default->top && brk_default->curr >= brk_default->base);
 	return prev;
 }
 

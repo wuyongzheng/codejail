@@ -1,11 +1,11 @@
 #define _GNU_SOURCE
-#include "codejail.h"
 #include <dlfcn.h>
 #include <unistd.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "codejail-int.h"
 
 static FILE *main_fp = NULL, *jail_fp = NULL;
 
@@ -16,10 +16,7 @@ FILE *cj_duplicate_file (FILE *fp)
 
 	if (cj_state != CJS_MAIN)
 		return fp;
-	if (main_fp != NULL) {
-		fprintf(stderr, "only one shadow is supported. ignored.\n");
-		return fp;
-	}
+	assert(main_fp == NULL && jail_fp == NULL); // only one shadow is supported.
 
 	fdm = fileno(fp);
 	if (fdm <= 2) {
@@ -48,6 +45,7 @@ int fclose (FILE *fp)
 	static int (*orig_fclose)(FILE *) = NULL;
 	int retval;
 
+	assert(fp != NULL);
 	if (orig_fclose == NULL)
 		orig_fclose = dlsym(RTLD_NEXT, "fclose");
 
@@ -59,15 +57,15 @@ int fclose (FILE *fp)
 		cj_jail(orig_fclose, 1, jail_fp);
 		main_fp = jail_fp = NULL;
 	} else if (fp == jail_fp) {
-		assert(cj_state == CJS_JAIL);
-		fprintf(stderr, "jail closing fp. we are screwed.\n");
+		fprintf(stderr, "%s closing jailfp. we are screwed.\n",
+				cj_state == CJS_MAIN ? "main" : "jail");
+		assert(0);
 	} else {
 		retval = orig_fclose(fp);
 	}
 	return retval;
 }
 
-int refmon_init (void)
+void refmon_init (void)
 {
-	return 0;
 }

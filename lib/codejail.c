@@ -1,5 +1,4 @@
 #define _GNU_SOURCE
-#include "codejail.h"
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <linux/sched.h>
@@ -13,17 +12,13 @@
 #include <stdarg.h>
 #include <string.h>
 #include <assert.h>
-#ifdef USE_PTHREAD_LOCK
-	#include <pthread.h>
-#endif
-
-/* from asm */
-extern void jump_stack (unsigned long bos, unsigned long newbos);
-extern void *call_varg_func (void *func, int argc, const void **argv);
+#include <pthread.h>
+#include "codejail-int.h"
 
 static int socks[2]; // socks[0] for parent, socks[1] for child
 enum cj_state_enum cj_state;
 static int shmfd;
+#define MAX_MAP_SECTIONS 16
 static struct map_section_struct {
 	void *ptr;
 	size_t size;
@@ -33,17 +28,7 @@ static struct map_section_struct {
 } map_sections[MAX_MAP_SECTIONS]; // [0] is main, [1] is jail, [2..] are libs.
 static int map_section_num;
 void *stack_main, *stack_jail, *heap_main, *heap_jail;
-
-#ifdef USE_PTHREAD_LOCK
 static pthread_mutex_t sock_mutex;
-# define init_sock_lock() pthread_mutex_init(&sock_mutex, NULL)
-# define lock_sock() pthread_mutex_lock(&sock_mutex)
-# define unlock_sock() pthread_mutex_unlock(&sock_mutex)
-#else
-# define init_sock_lock()
-# define lock_sock()
-# define unlock_sock()
-#endif
 
 static int shm_create (int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
@@ -325,7 +310,8 @@ static int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, cons
 		jump_stack(oldbos, (unsigned long)stack_main + MSTACK_SIZE);
 	}
 	cj_alloc_init();
-	init_sock_lock();
+	refmon_init();
+	pthread_mutex_init(&sock_mutex, NULL);
 
 	return 0;
 }
@@ -346,10 +332,10 @@ int cj_recv (void *data, size_t size)
 	message.type = CJ_MT_RECV;
 	message.sendrecv.addr = data;
 	message.sendrecv.size = size;
-	lock_sock();
+	pthread_mutex_lock(&sock_mutex);
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	assert(recv(socks[0], data, size, 0) == size);
-	unlock_sock();
+	pthread_mutex_unlock(&sock_mutex);
 
 	return 0;
 }
@@ -370,10 +356,10 @@ int cj_send (void *data, size_t size)
 	message.type = CJ_MT_SEND;
 	message.sendrecv.addr = data;
 	message.sendrecv.size = size;
-	lock_sock();
+	pthread_mutex_lock(&sock_mutex);
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	assert(send(socks[0], data, size, 0) == size);
-	unlock_sock();
+	pthread_mutex_unlock(&sock_mutex);
 
 	return 0;
 }
@@ -400,10 +386,10 @@ uintptr_t cj_jail (void *func, int argc, ...)
 	for (i = 0; i < argc; i ++)
 		message.jail.args[i] = va_arg(ap, uintptr_t);
 	va_end(ap);
-	lock_sock();
+	pthread_mutex_lock(&sock_mutex);
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	assert(recv(socks[0], &message, sizeof(message), 0) == sizeof(message));
-	unlock_sock();
+	pthread_mutex_unlock(&sock_mutex);
 	assert(message.type == CJ_MT_RETURN);
 	return message.jreturn.retval;
 }

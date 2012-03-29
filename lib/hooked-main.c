@@ -1,8 +1,8 @@
-#include "test-lib.h"
-#include "codejail.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "test-lib.h"
+#include "codejail.h"
 
 int main (void)
 {
