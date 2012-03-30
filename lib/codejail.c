@@ -245,7 +245,7 @@ static int child_loop (void *arg)
 	}
 }
 
-static void drop_jlib_exec(int jlibn, const char **jlibs)
+static void drop_jlib_exec (int jlibn, const char **jlibs)
 {
 	FILE *fp = fopen("/proc/self/maps", "r");
 	char line[512];
@@ -263,7 +263,7 @@ static void drop_jlib_exec(int jlibn, const char **jlibs)
 			if (strstr(line, jlibs[i])) {
 				unsigned long start, end;
 				sscanf(line, "%lx-%lx", &start, &end);
-				printf("drop exec %s@%p-%p\n", jlibs[i], (void *)start, (void *)end);
+				fprintf(stderr, "drop exec %s@%p-%p\n", jlibs[i], (void *)start, (void *)end);
 				assert(mprotect((void *)start, end - start, PROT_READ) == 0); // if it fails, probably kernel is holding maps lock.
 				break;
 			}
@@ -320,13 +320,13 @@ int cj_recv (void *data, size_t size)
 {
 	struct cj_message_header message;
 
+	assert(size > 0);
 	assert(cj_state != CJS_UNINIT);
 	if (cj_state == CJS_JAIL)
 		return 0;
 
-	/* only stack_main and heap_main need to be received */
-	if ((data < stack_main || data >= stack_main + MSTACK_SIZE) &&
-			(data < heap_main || data >= heap_main + MHEAP_SIZE))
+	// don't recv shared type
+	if (data == NULL || cj_memtype(data) == CJMT_SHARED)
 		return 0;
 
 	message.type = CJ_MT_RECV;
@@ -349,8 +349,8 @@ int cj_send (void *data, size_t size)
 	if (cj_state == CJS_JAIL)
 		return 0;
 
-	// no need to send shared memory
-	if (cj_memtype(data) != CJMT_ISOLATED)
+	// don't send shared type
+	if (data == NULL || cj_memtype(data) == CJMT_SHARED)
 		return 0;
 
 	message.type = CJ_MT_SEND;

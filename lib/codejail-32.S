@@ -94,7 +94,7 @@ mymainstub:
 	movl    12(%esp), %eax
 	pushl   %eax
 	movl    origmain, %eax
-    pushl   %eax
+	pushl   %eax
 	call    hookmain
 	addl    $16, %esp
 	ret
