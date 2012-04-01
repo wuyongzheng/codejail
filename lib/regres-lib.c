@@ -42,3 +42,8 @@ void strtoupper (char *str)
 		str ++;
 	}
 }
+
+int call_callback (int(*cb)(int), int a)
+{
+	return cb(a + 1) + 1;
+}

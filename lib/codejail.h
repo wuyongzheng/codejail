@@ -19,6 +19,7 @@ enum cj_memtype_enum {
 int cj_recv (void *data, size_t size);
 int cj_send (void *data, size_t size);
 uintptr_t cj_jail (void *func, int argc, ...);
+void *cj_reg_callback (void *origfunc, void *wrapperfunc, int argc);
 FILE *cj_duplicate_file (FILE *fp);
 enum cj_memtype_enum cj_memtype (void *addr);
 extern enum cj_state_enum cj_state;

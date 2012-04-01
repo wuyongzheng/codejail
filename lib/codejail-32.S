@@ -1,4 +1,3 @@
-	.local  origmain
 	.comm   origmain,4,4
 
 	.section .rodata
@@ -35,7 +34,6 @@ patch_restart:
 	movl	%ebx, %eax
 	jmp patch_restart
 patch_finish:
-
 	# call memcpy to copy
 	movl    %esp, %eax       # eax = src = esp
 	movl    8(%ebp), %ebx
@@ -61,7 +59,7 @@ patch_finish:
 
 	.globl  call_varg_func
 	.type   call_varg_func, @function
-# void *call_varg_func (void *func, int argc, const void **argv);
+# uintptr_t call_varg_func (void *func, int argc, const uintptr_t *argv)
 call_varg_func:
 	pushl   %ebp
 	movl    %esp, %ebp
@@ -84,21 +82,6 @@ out1:
 	popl    %ebp
 	ret
 
-	.local  mymainstub
-	.type   mymainstub, @function
-mymainstub:
-	movl    12(%esp), %eax
-	pushl   %eax
-	movl    12(%esp), %eax
-	pushl   %eax
-	movl    12(%esp), %eax
-	pushl   %eax
-	movl    origmain, %eax
-	pushl   %eax
-	call    hookmain
-	addl    $16, %esp
-	ret
-
 	.globl  __libc_start_main
 	.type   __libc_start_main, @function
 # extern int BP_SYM (__libc_start_main) (int (*main) (int, char **, char **),
@@ -112,44 +95,12 @@ mymainstub:
 __libc_start_main:
 	movl    4(%esp), %eax
 	movl    %eax, origmain
-	movl    $mymainstub, %eax
+	movl    $hookmain, %eax
 	movl    %eax, 4(%esp)
 	pushl   $dlsymstr
 	pushl   $-1
 	call    dlsym
 	addl    $8, %esp
-#	movl    $0, (0)
 	jmp     *%eax
 
-# 	.globl	child_jail_entry
-# 	.type	child_jail_entry, @function
-# child_jail_entry:
-# 	movl	-4(%esp), %edx # edx=func
-# 	movl	-8(%esp), %eax # eax=pusha_addr
-# 
-# # save all jail registers except eax, edx and esp
-# 	pushl	%ecx
-# 	pushl	%ebx
-# 	pushl	%ebp
-# 	pushl	%esi
-# 	pushl	%edi
-# # save esp to saved_esp
-# 	movl	%esp, saved_esp # FIXME
-# 
-# # set esp to new esp
-# 	movl	16(%eax), %esp
-# # set return address to ours. we don't need to save the original
-# 	movl	$child_jail_exit, (%esp)
-# # jump to target
-# 	jmp	*%edx
-# 
-# child_jail_exit:
-# # restore esp
-# 	movl	saved_esp, %esp # FIXME
-# # restore jail registers
-# 	popl	%edi
-# 	popl	%esi
-# 	popl	%ebp
-# 	popl	%ebx
-# 	popl	%ecx
-# 	ret
+#include "callback-stubs-32.S"

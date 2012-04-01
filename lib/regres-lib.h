@@ -8,5 +8,6 @@ void write_global (const char *data);
 char *read_globalref (void);
 void read_global (char *data);
 void strtoupper (char *str);
+int call_callback (int(*cb)(int), int a);
 
 #endif

@@ -9,6 +9,21 @@ static void presult (int n, int pass)
 	printf("test %d: %s\n", n, pass ? "pass" : "fail");
 }
 
+static int callback1 (int a)
+{
+	return a + 1;
+}
+
+static int callback1_wrapper (int(*callback1)(int), int a)
+{
+	return callback1(a) + 10;
+}
+
+static int callback2 (int a)
+{
+	return cj_jail(call_callback, 2, cj_reg_callback(callback1, NULL, 1), a + 1) + 1;
+}
+
 int main (void)
 {
 	{
@@ -93,6 +108,11 @@ int main (void)
 		for (i = 0; i < num; i ++)
 			free(arr[i]);
 	}
+
+	presult(13, call_callback(callback1, 1) == 4);
+	presult(14, cj_jail(call_callback, 2, cj_reg_callback(callback1, NULL, 1), 1) == 4);
+	presult(15, cj_jail(call_callback, 2, cj_reg_callback(callback1, callback1_wrapper, 1), 1) == 14);
+	presult(16, cj_jail(call_callback, 2, cj_reg_callback(callback2, NULL, 1), 1) == 8);
 
 	return 0;
 }

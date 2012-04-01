@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <stdarg.h>
 #include <string.h>
 #include <assert.h>
 #include <pthread.h>
@@ -27,8 +26,14 @@ static struct map_section_struct {
 	int isshared;
 } map_sections[MAX_MAP_SECTIONS]; // [0] is main, [1] is jail, [2..] are libs.
 static int map_section_num;
+static struct callback_struct {
+	void *orig;
+	void *wrapper;
+	void *stub;
+	int argc;
+} *callbacks;
 void *stack_main, *stack_jail, *heap_main, *heap_jail;
-static pthread_mutex_t sock_mutex;
+static pthread_mutex_t sock_mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP; // mutex is only used in main
 
 static int shm_create (int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
@@ -190,12 +195,50 @@ static void child_jail (const struct cj_message_header *message)
 
 	assert(shm_remap() == 0);
 
-	retmsg.jreturn.retval = (uintptr_t)call_varg_func(
+	retmsg.type = CJ_MT_RETURN;
+	retmsg.jreturn.retval = call_varg_func(
 			(void *)message->jail.func,
 			message->jail.argc,
-			(const void **)message->jail.args);
-	retmsg.type = CJ_MT_RETURN;
+			message->jail.argv);
 	assert(send(socks[1], &retmsg, sizeof(retmsg), 0) == sizeof(retmsg));
+}
+
+static uintptr_t child_service (void)
+{
+	assert(cj_state == CJS_JAIL);
+
+	while (1) {
+		struct cj_message_header message;
+		ssize_t message_size;
+
+		message_size = recv(socks[1], &message, sizeof(message), 0);
+		assert(message_size == sizeof(message));
+		switch (message.type) {
+			case CJ_MT_SEND: child_send(&message); break;
+			case CJ_MT_RECV: child_recv(&message); break;
+			case CJ_MT_JAIL: child_jail(&message); break;
+			case CJ_MT_CBRETURN: return message.jreturn.retval;
+			case CJ_MT_EXIT: exit(0); return 0;
+			default: fprintf(stderr, "unknown message type %d\n", message.type); return 1;
+		}
+	}
+}
+
+uintptr_t child_callback (int cbhandle, uintptr_t *argv)
+{
+	struct cj_message_header message;
+
+	assert(cbhandle >= 0 && cbhandle < MAXCALLBACKS);
+	assert(cj_state == CJS_JAIL);
+	// if (cj_state == CJS_MAIN) {
+	// 	return (uintptr_t)call_varg_func(callbacks[cbhandle].orig, callbacks[cbhandle].argc, (void **)argv);
+	// }
+
+	message.type = CJ_MT_CALLBACK;
+	message.callback.handle = cbhandle;
+	message.callback.argv = argv;
+	assert(send(socks[1], &message, sizeof(message), 0) == sizeof(message));
+	return child_service();
 }
 
 static unsigned long getbos (void)
@@ -220,7 +263,7 @@ static unsigned long getbos (void)
 	return atoll(ptr);
 }
 
-static int child_loop (void *arg)
+static int child_main (void *arg)
 {
 	cj_state = CJS_JAIL;
 	// close(socks[0]); // cannot close because of CLONE_FILES
@@ -230,18 +273,7 @@ static int child_loop (void *arg)
 	cj_alloc_init();
 
 	while (1) {
-		struct cj_message_header message;
-		ssize_t message_size;
-
-		message_size = recv(socks[1], &message, sizeof(message), 0);
-		assert(message_size == sizeof(message));
-		switch (message.type) {
-			case CJ_MT_SEND: child_send(&message); break;
-			case CJ_MT_RECV: child_recv(&message); break;
-			case CJ_MT_JAIL: child_jail(&message); break;
-			case CJ_MT_EXIT: return 0;
-			default: fprintf(stderr, "unknown message type %d\n", message.type); return 1;
-		}
+		child_service();
 	}
 }
 
@@ -294,7 +326,7 @@ static int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, cons
 	if (shm_create(mlibn, mlibs, jlibn, jlibs))
 		return 1;
 
-	if (clone(child_loop, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS, NULL) == -1) {
+	if (clone(child_main, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS, NULL) == -1) {
 		fprintf(stderr, "clone() failed.\n");
 		return 2;
 	}
@@ -311,7 +343,15 @@ static int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, cons
 	}
 	cj_alloc_init();
 	refmon_init();
-	pthread_mutex_init(&sock_mutex, NULL);
+	//pthread_mutex_init(&sock_mutex, PTHREAD_MUTEX_RECURSIVE);
+	{
+		int i, stub_size;
+		callbacks = (struct callback_struct *)calloc(MAXCALLBACKS, sizeof(struct callback_struct));
+		assert(cj_memtype(callbacks) == CJMT_PRIVATE);
+		stub_size = (char *)cj_callback_stub1 - (char *)cj_callback_stub0;
+		for (i = 0; i < MAXCALLBACKS; i ++)
+			callbacks[i].stub = (void *)cj_callback_stub0 + i * stub_size;
+	}
 
 	return 0;
 }
@@ -367,31 +407,80 @@ int cj_send (void *data, size_t size)
 uintptr_t cj_jail (void *func, int argc, ...)
 {
 	struct cj_message_header message;
-	va_list ap;
-	int i;
 
 	assert(cj_state != CJS_UNINIT);
 	/* when using wrapper library, if jailed library function calls another
 	 * jailed library function, cj_jail will be used as well.
 	 * We need to let it call directly */
 	if (cj_state == CJS_JAIL) {
-		return (uintptr_t)call_varg_func(func, argc, (const void **)((&argc)+1));
+		return call_varg_func(func, argc, (uintptr_t *)(&argc)+1);
 	}
 
-	assert(argc <= MAX_ARGS);
 	message.type = CJ_MT_JAIL;
-	message.jail.func = (uintptr_t)func;
+	message.jail.func = func;
 	message.jail.argc = argc;
-	va_start(ap, argc);
-	for (i = 0; i < argc; i ++)
-		message.jail.args[i] = va_arg(ap, uintptr_t);
-	va_end(ap);
+	message.jail.argv = (uintptr_t *)(&argc) + 1;
 	pthread_mutex_lock(&sock_mutex);
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
-	assert(recv(socks[0], &message, sizeof(message), 0) == sizeof(message));
+	while (1) {
+		int handle;
+		uintptr_t retval;
+
+		assert(recv(socks[0], &message, sizeof(message), 0) == sizeof(message));
+		assert(message.type == CJ_MT_RETURN || message.type == CJ_MT_CALLBACK);
+		if (message.type == CJ_MT_RETURN)
+			break;
+
+		handle = message.callback.handle;
+		assert(handle >= 0 && handle < MAXCALLBACKS && callbacks[handle].orig);
+		//TODO check if [argv,argv+argc] is valid memory
+		if (callbacks[handle].wrapper) {
+			uintptr_t argv[16];
+			assert(callbacks[handle].argc <= 15);
+			argv[0] = (uintptr_t)callbacks[handle].orig;
+			memcpy(&argv[1], message.callback.argv, callbacks[handle].argc * sizeof(uintptr_t));
+			retval = call_varg_func(
+					callbacks[handle].wrapper,
+					callbacks[handle].argc + 1,
+					argv);
+		} else {
+			retval = call_varg_func(
+					callbacks[handle].orig,
+					callbacks[handle].argc,
+					message.callback.argv);
+		}
+		message.type = CJ_MT_CBRETURN;
+		message.jreturn.retval = retval;
+		assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
+	}
 	pthread_mutex_unlock(&sock_mutex);
-	assert(message.type == CJ_MT_RETURN);
 	return message.jreturn.retval;
+}
+
+void *cj_reg_callback (void *origfunc, void *wrapperfunc, int argc)
+{
+	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	int i;
+
+	assert(cj_state == CJS_MAIN);
+
+	pthread_mutex_lock(&mutex);
+	for (i = 0; i < MAXCALLBACKS; i ++) {
+		if (callbacks[i].orig == NULL) {
+			callbacks[i].orig = origfunc;
+			callbacks[i].wrapper = wrapperfunc;
+			callbacks[i].argc = argc;
+			break;
+		} else if (origfunc == callbacks[i].orig &&
+				wrapperfunc == callbacks[i].wrapper) {
+			assert(argc == callbacks[i].argc);
+			break;
+		}
+	}
+	assert(i < MAXCALLBACKS);
+	pthread_mutex_unlock(&mutex);
+
+	return callbacks[i].stub;
 }
 
 static void cj_destroy (void)
@@ -403,9 +492,8 @@ static void cj_destroy (void)
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 }
 
-int hookmain (
-		int (*origmain)(int, char **, char **),
-		int argc, char **argv, char **envp)
+extern int (*origmain)(int, char **, char **);
+int hookmain (int argc, char **argv, char **envp)
 {
 	char *mlibs[10], *jlibs[10], *env, *lib;
 	int mlibn = 0, jlibn = 0, nx = 0, i;
