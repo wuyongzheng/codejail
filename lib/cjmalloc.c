@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include "codejail-int.h"
 
 #define ONLY_MSPACES 1
@@ -126,6 +127,35 @@ void free (void *ptr)
 		orig_free(ptr);
 	}
 }
+
+void *mmap (void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+	static void *(*orig_mmap) (void *, size_t, int, int, int, off_t) = NULL;
+	if (orig_mmap == NULL)
+		orig_mmap = dlsym(RTLD_NEXT, "mmap");
+
+	if (brk_default == NULL || addr != NULL || !(flags & MAP_ANONYMOUS))
+		return orig_mmap(addr, length, prot, flags, fd, offset);
+
+	void *ptr = memalign(4096, length);
+	fprintf(stderr, "mmap %d in %d -> %p\n", length, cj_state, ptr);
+	memset(ptr, 0, length);
+	return ptr;
+}
+
+//int munmap(void *addr, size_t length)
+//{
+//	static int (*orig_munmap) (void *, size_t) = NULL;
+//	if (orig_munmap == NULL)
+//		orig_munmap = dlsym(RTLD_NEXT, "munmap");
+//
+//	if (brk_default == NULL || cj_memtype(addr) == CJMT_ISOLATED)
+//		return orig_munmap(addr, length);
+//
+//	fprintf(stderr, "munmap %p %d in %d\n", addr, length, cj_state);
+//	free(addr);
+//	return 0;
+//}
 
 void cj_alloc_init (void)
 {

@@ -6,8 +6,8 @@
 
 #define MSTACK_SIZE (64 * 1024)
 #define JSTACK_SIZE (16 * 1024)
-#define MHEAP_SIZE (1000 * 1024)
-#define JHEAP_SIZE (1000 * 1024)
+#define MHEAP_SIZE (50000 * 1024)
+#define JHEAP_SIZE (10000 * 1024)
 #ifndef MAXCALLBACKS
 # error "MAXCALLBACKS not defined."
 #endif

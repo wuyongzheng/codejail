@@ -11,7 +11,7 @@ callback-stubs-32.S: gencbstub32.sh
 	bash gencbstub32.sh $(MAXCALLBACKS) > callback-stubs-32.S
 
 libcodejail.so: codejail.c cjmalloc.c refmon.c codejail-32.S callback-stubs-32.S dlmalloc.o codejail.h codejail-int.h
-	gcc -g -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so -DMAXCALLBACKS=$(MAXCALLBACKS) codejail.c cjmalloc.c refmon.c codejail-32.S dlmalloc.o -lc -lrt -ldl
+	gcc -g -O -shared -fPIC -Wall -Wl,-soname,libcodejail.so -o libcodejail.so -DMAXCALLBACKS=$(MAXCALLBACKS) codejail.c cjmalloc.c refmon.c codejail-32.S dlmalloc.o -lc -lrt -ldl
 
 libregres.so: regres-lib.c libcodejail.so
 	gcc -shared -fPIC -Wall -Wl,-soname,libregres.so -o libregres.so regres-lib.c -lc
