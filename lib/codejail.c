@@ -462,7 +462,7 @@ void *cj_reg_callback (void *origfunc, void *wrapperfunc, int argc)
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	int i;
 
-	fprintf(stderr, "registering callback %p+%d as w=%p\n", origfunc, argc, wrapperfnc);
+	fprintf(stderr, "registering callback %p+%d as w=%p\n", origfunc, argc, wrapperfunc);
 
 	assert(cj_state == CJS_MAIN);
 
