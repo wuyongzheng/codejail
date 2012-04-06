@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <malloc.h>
 #include <sys/mman.h>
 #include "codejail-int.h"
 
@@ -28,90 +29,61 @@ void *cjsbrk (intptr_t increment)
 	return prev;
 }
 
-void *malloc (size_t size)
+static void *cjm_malloc (size_t size)
 {
-	if (brk_default == NULL) {
-		static void *(*orig_malloc)(size_t) = NULL;
-		if (orig_malloc == NULL)
-			orig_malloc = dlsym(RTLD_NEXT, "malloc");
-		return orig_malloc(size);
-	} else {
-		void *ptr = mspace_malloc(dlms_default, size);
-		assert(ptr >= brk_default->base && ptr < brk_default->top);
-		return ptr;
-	}
+	void *ptr;
+	assert(brk_default != NULL && dlms_default != NULL);
+	ptr = mspace_malloc(dlms_default, size);
+	assert(ptr >= brk_default->base && ptr < brk_default->top);
+	return ptr;
 }
 
-void *calloc (size_t nmemb, size_t size)
+static void *cjm_calloc (size_t nmemb, size_t size)
 {
-	if (brk_default == NULL) {
-		static void *(*orig_calloc)(size_t, size_t) = NULL;
-		if (nmemb == 1 && size == 20) // workaround for infinite recursion of dlsym+calloc
-			return NULL;
-		if (orig_calloc == NULL)
-			orig_calloc = dlsym(RTLD_NEXT, "calloc");
-		return orig_calloc(nmemb, size);
-	} else {
-		void *ptr = mspace_calloc(dlms_default, nmemb, size);
-		assert(ptr >= brk_default->base && ptr < brk_default->top);
-		return ptr;
-	}
+	void *ptr;
+	assert(brk_default != NULL && dlms_default != NULL);
+	ptr = mspace_calloc(dlms_default, nmemb, size);
+	assert(ptr >= brk_default->base && ptr < brk_default->top);
+	return ptr;
 }
 
-void *realloc (void *ptr, size_t size)
+static void *cjm_realloc (void *ptr, size_t size)
 {
-	static void *(*orig_realloc)(void *, size_t) = NULL;
+	void *newptr;
 
-	if (brk_default == NULL) {
-		if (orig_realloc == NULL)
-			orig_realloc = dlsym(RTLD_NEXT, "realloc");
-		return orig_realloc(ptr, size);
-	} else {
-		void *newptr;
-		if (ptr >= heap_main && ptr < heap_main + MHEAP_SIZE) {
-			assert(cj_state == CJS_MAIN); // I don't what to do if jail realloc main's malloc
-			newptr = mspace_realloc(dlms_main, ptr, size);
-			assert(newptr >= brk_main->base && newptr < brk_main->top);
-		} else if (ptr >= heap_jail && ptr < heap_jail + JHEAP_SIZE) {
-			// main is allowed to realloc jail's malloc, but
-			// I can't just call mspace_realloc directly, because
-			// cjsbrk will allocate heap in main.
-			assert(cj_state == CJS_JAIL);
-			newptr = mspace_realloc(dlms_jail, ptr, size);
-			assert(newptr >= brk_jail->base && newptr < brk_jail->top);
-		} else {
-			if (orig_realloc == NULL)
-				orig_realloc = dlsym(RTLD_NEXT, "realloc");
-			newptr = orig_realloc(ptr, size);
-		}
-		return newptr;
+	assert(brk_default != NULL && dlms_default != NULL);
+	if (ptr == NULL) {
+		newptr = cjm_malloc(size);
+	} else if (ptr >= heap_main && ptr < heap_main + MHEAP_SIZE) {
+		assert(cj_state == CJS_MAIN); // I don't know what to do if jail realloc main's malloc
+		newptr = mspace_realloc(dlms_main, ptr, size);
+		assert(newptr >= brk_main->base && newptr < brk_main->top);
+	} else if (ptr >= heap_jail && ptr < heap_jail + JHEAP_SIZE) {
+		// main is allowed to realloc jail's malloc, but
+		// I can't just call mspace_realloc directly, because
+		// cjsbrk will allocate heap in main.
+		assert(cj_state == CJS_JAIL);
+		newptr = mspace_realloc(dlms_jail, ptr, size);
+		assert(newptr >= brk_jail->base && newptr < brk_jail->top);
+	} else { // allocated before us. we can't free it.
+		newptr = cjm_malloc(size);
+		memcpy(newptr, ptr, size); // may copy more if shrinking, shouldn't crash mostly.
 	}
+	return newptr;
 }
 
-void *memalign (size_t alignment, size_t bytes)
+static void *cjm_memalign (size_t alignment, size_t bytes)
 {
-	if (brk_default == NULL) {
-		static void *(*orig_memalign)(size_t, size_t) = NULL;
-		if (orig_memalign == NULL)
-			orig_memalign = dlsym(RTLD_NEXT, "memalign");
-		return orig_memalign(alignment, bytes);
-	} else {
-		void *ptr = mspace_memalign(dlms_default, alignment, bytes);
-		assert(ptr >= brk_default->base && ptr < brk_default->top);
-		return ptr;
-	}
+	void *ptr;
+	assert(brk_default != NULL && dlms_default != NULL);
+	ptr = mspace_memalign(dlms_default, alignment, bytes);
+	assert(ptr >= brk_default->base && ptr < brk_default->top);
+	return ptr;
 }
 
-void free (void *ptr)
+static void cjm_free (void *ptr)
 {
-	static void (*orig_free)(void *) = NULL;
-
-	if (brk_default == NULL) { // before cj_alloc_init()
-		if (orig_free == NULL)
-			orig_free = dlsym(RTLD_NEXT, "free");
-		orig_free(ptr);
-		return;
-	}
+	assert(brk_default != NULL && dlms_default != NULL);
 
 	if (ptr >= heap_main && ptr < heap_main + MHEAP_SIZE) {
 		if (cj_state == CJS_JAIL) {
@@ -121,12 +93,10 @@ void free (void *ptr)
 		mspace_free(dlms_main, ptr);
 	} else if (ptr >= heap_jail && ptr < heap_jail + JHEAP_SIZE) {
 		mspace_free(dlms_jail, ptr);
-	} else {
-		if (orig_free == NULL)
-			orig_free = dlsym(RTLD_NEXT, "free");
-		orig_free(ptr);
 	}
 }
+
+pid_t fork(void) {return -1;}
 
 void *mmap (void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
@@ -178,5 +148,40 @@ void cj_alloc_init (void)
 	} else {
 		dlms_jail = dlms_default;
 		dlms_main = heap_main + (dlms_jail - heap_jail);
+	}
+
+	{
+		const struct {
+			void *func;
+			const char *name;
+		} hookfuncs[] = {
+			{cjm_malloc, "malloc"},
+			{cjm_calloc, "calloc"},
+			{cjm_realloc, "realloc"},
+			{cjm_memalign, "memalign"},
+			{cjm_free, "free"}};
+		int i;
+		for (i = 0; i < sizeof(hookfuncs)/sizeof(hookfuncs[0]); i ++) {
+			void *entry = dlsym(RTLD_DEFAULT, hookfuncs[i].name);
+			void *page;
+			size_t size;
+			unsigned char code[7];
+
+			printf("%s entry=%p\n", hookfuncs[i].name, entry);
+
+			// mov func, %eax
+			code[0] = 0xb8;
+			*(void **)(code+1) = hookfuncs[i].func;
+			// jmp *%eax
+			code[5] = 0xff;
+			code[6] = 0xe0;
+
+			assert(entry);
+			page = (void *)((unsigned long)entry & 0xfffff000);
+			size = entry - page > 4096 - 7 ? 8192 : 4096;
+			assert(mprotect(page, size, PROT_READ | PROT_WRITE | PROT_EXEC) == 0);
+			memcpy(entry, code, 7);
+			assert(mprotect(page, size, PROT_READ | PROT_EXEC) == 0);
+		}
 	}
 }

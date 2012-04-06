@@ -4,10 +4,10 @@
 #include <stdint.h>
 #include "codejail.h"
 
-#define MSTACK_SIZE (64 * 1024)
-#define JSTACK_SIZE (16 * 1024)
-#define MHEAP_SIZE (50000 * 1024)
-#define JHEAP_SIZE (10000 * 1024)
+#define MSTACK_SIZE (16000 * 1024)
+#define JSTACK_SIZE (8000 * 1024)
+#define MHEAP_SIZE (100000 * 1024)
+#define JHEAP_SIZE (20000 * 1024)
 #ifndef MAXCALLBACKS
 # error "MAXCALLBACKS not defined."
 #endif
