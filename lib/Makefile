@@ -25,4 +25,4 @@ reg: regres-main
 
 .PHONY: clean
 clean:
-	rm libcodejail.so dlmalloc.o regres-main libregres.so
+	-rm -f libcodejail.so dlmalloc.o regres-main libregres.so callback-stubs-32.S
