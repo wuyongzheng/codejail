@@ -4,6 +4,7 @@
 #include <linux/sched.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <sched.h>
 #include <stdlib.h>
@@ -34,6 +35,11 @@ static struct callback_struct {
 } *callbacks;
 void *stack_main, *stack_jail, *heap_main, *heap_jail;
 static pthread_mutex_t sock_mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP; // mutex is only used in main
+static int stats_jail = 0, stats_callback = 0,
+		   stats_recv = 0, stats_recvb = 0,
+		   stats_send = 0, stats_sendb = 0;
+static int stats_jails[10] = {0};
+static int stats_jail_level = 0;
 
 static int shm_create (int mlibn, const char **mlibs, int jlibn, const char **jlibs)
 {
@@ -326,7 +332,7 @@ static int cj_create (int nxjlib, int mlibn, const char **mlibs, int jlibn, cons
 	if (shm_create(mlibn, mlibs, jlibn, jlibs))
 		return 1;
 
-	if (clone(child_main, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS, NULL) == -1) {
+	if (clone(child_main, stack_jail + JSTACK_SIZE, CLONE_FILES|CLONE_FS|SIGCHLD, NULL) == -1) {
 		fprintf(stderr, "clone() failed.\n");
 		return 2;
 	}
@@ -376,6 +382,8 @@ int cj_recv (void *data, size_t size)
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	assert(recv(socks[0], data, size, 0) == size);
 	pthread_mutex_unlock(&sock_mutex);
+	stats_recv ++;
+	stats_recvb += size;
 
 	return 0;
 }
@@ -400,6 +408,8 @@ int cj_send (void *data, size_t size)
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
 	assert(send(socks[0], data, size, 0) == size);
 	pthread_mutex_unlock(&sock_mutex);
+	stats_send ++;
+	stats_sendb += size;
 
 	return 0;
 }
@@ -416,6 +426,7 @@ uintptr_t cj_jail (void *func, int argc, ...)
 		return call_varg_func(func, argc, (uintptr_t *)(&argc)+1);
 	}
 
+	stats_jail_level ++;
 	message.type = CJ_MT_JAIL;
 	message.jail.func = func;
 	message.jail.argc = argc;
@@ -452,8 +463,13 @@ uintptr_t cj_jail (void *func, int argc, ...)
 		message.type = CJ_MT_CBRETURN;
 		message.jreturn.retval = retval;
 		assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
+		stats_callback ++;
 	}
 	pthread_mutex_unlock(&sock_mutex);
+	stats_jail ++;
+	stats_jail_level --;
+	assert(stats_jail_level < sizeof(stats_jails)/sizeof(stats_jails[0]));
+	stats_jails[stats_jail_level] ++;
 	return message.jreturn.retval;
 }
 
@@ -492,6 +508,14 @@ static void cj_destroy (void)
 	assert(cj_state == CJS_MAIN);
 	message.type = CJ_MT_EXIT;
 	assert(send(socks[0], &message, sizeof(message), 0) == sizeof(message));
+	if (wait(0) == -1)
+		fprintf(stderr, "wait() failed.\n");
+	fprintf(stderr, "stats: jail=%d, callback=%d, recv/send=%d/%d (%d/%d bytes)\n",
+			stats_jail, stats_callback,
+			stats_recv, stats_send,
+			stats_recvb, stats_sendb);
+	fprintf(stderr, "stats: jail0=%d, jail1=%d, jail2=%d\n",
+			stats_jails[0], stats_jails[1], stats_jails[2]);
 }
 
 extern int (*origmain)(int, char **, char **);

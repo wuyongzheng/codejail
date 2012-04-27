@@ -100,32 +100,42 @@ pid_t fork(void) {return -1;}
 
 void *mmap (void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
+	void *retaddr;
 	static void *(*orig_mmap) (void *, size_t, int, int, int, off_t) = NULL;
 	if (orig_mmap == NULL)
 		orig_mmap = dlsym(RTLD_NEXT, "mmap");
 
-	if (brk_default == NULL || addr != NULL || !(flags & MAP_ANONYMOUS))
-		return orig_mmap(addr, length, prot, flags, fd, offset);
+	if (brk_default != NULL && addr == NULL && (flags & MAP_ANONYMOUS)) {
+		retaddr = memalign(4096, length);
+		memset(retaddr, 0, length);
+		fprintf(stderr, "mmap anon %zd in %d -> %p\n", length, cj_state, retaddr);
+	} else if (brk_default != NULL && addr == NULL && !(prot & PROT_WRITE) && (flags & MAP_PRIVATE)) {
+		retaddr = orig_mmap(addr, length, prot, flags, fd, offset);
+		assert((void *)cj_jail(orig_mmap, 6, retaddr, length, prot, flags, fd, offset) == retaddr);
+		fprintf(stderr, "mmap ro %zd from %d in %d -> %p\n", length, fd, cj_state, retaddr);
+	} else {
+		retaddr = orig_mmap(addr, length, prot, flags, fd, offset);
+	}
 
-	void *ptr = memalign(4096, length);
-	fprintf(stderr, "mmap %d in %d -> %p\n", length, cj_state, ptr);
-	memset(ptr, 0, length);
-	return ptr;
+	return retaddr;
 }
 
-//int munmap(void *addr, size_t length)
-//{
-//	static int (*orig_munmap) (void *, size_t) = NULL;
-//	if (orig_munmap == NULL)
-//		orig_munmap = dlsym(RTLD_NEXT, "munmap");
-//
-//	if (brk_default == NULL || cj_memtype(addr) == CJMT_ISOLATED)
-//		return orig_munmap(addr, length);
-//
-//	fprintf(stderr, "munmap %p %d in %d\n", addr, length, cj_state);
-//	free(addr);
-//	return 0;
-//}
+int munmap(void *addr, size_t length)
+{
+	int retval;
+	static int (*orig_munmap) (void *, size_t) = NULL;
+	if (orig_munmap == NULL)
+		orig_munmap = dlsym(RTLD_NEXT, "munmap");
+
+	if (brk_default != NULL && cj_memtype(addr) != CJMT_ISOLATED) {
+		fprintf(stderr, "munmap %p+%zd ignored\n", addr, length);
+		retval = 0;
+	} else {
+		retval = orig_munmap(addr, length);
+	}
+
+	return retval;
+}
 
 void cj_alloc_init (void)
 {
@@ -163,11 +173,13 @@ void cj_alloc_init (void)
 		int i;
 		for (i = 0; i < sizeof(hookfuncs)/sizeof(hookfuncs[0]); i ++) {
 			void *entry = dlsym(RTLD_DEFAULT, hookfuncs[i].name);
+			void *entrynext = dlsym(RTLD_NEXT, hookfuncs[i].name);
 			void *page;
 			size_t size;
 			unsigned char code[7];
 
-			printf("%s entry=%p\n", hookfuncs[i].name, entry);
+			//printf("%s defa entry=%p\n", hookfuncs[i].name, entry);
+			//printf("%s next entry=%p\n", hookfuncs[i].name, entrynext);
 
 			// mov func, %eax
 			code[0] = 0xb8;
@@ -182,6 +194,15 @@ void cj_alloc_init (void)
 			assert(mprotect(page, size, PROT_READ | PROT_WRITE | PROT_EXEC) == 0);
 			memcpy(entry, code, 7);
 			assert(mprotect(page, size, PROT_READ | PROT_EXEC) == 0);
+
+			if (entrynext != entry) {
+				assert(entrynext);
+				page = (void *)((unsigned long)entrynext & 0xfffff000);
+				size = entrynext - page > 4096 - 7 ? 8192 : 4096;
+				assert(mprotect(page, size, PROT_READ | PROT_WRITE | PROT_EXEC) == 0);
+				memcpy(entrynext, code, 7);
+				assert(mprotect(page, size, PROT_READ | PROT_EXEC) == 0);
+			}
 		}
 	}
 }
