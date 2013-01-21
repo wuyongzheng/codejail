@@ -174,11 +174,13 @@ hit:
 static int shm_remap (void)
 {
 	int i;
+
+	assert(orig_mmap != NULL && orig_munmap != NULL);
 	for (i = 0; i < map_section_num; i ++) {
 		if (map_sections[i].isshared)
 			continue;
-		munmap(map_sections[i].ptr, map_sections[i].size);
-		assert(mmap(map_sections[i].ptr, map_sections[i].size,
+		orig_munmap(map_sections[i].ptr, map_sections[i].size);
+		assert(orig_mmap(map_sections[i].ptr, map_sections[i].size,
 					PROT_READ|PROT_WRITE, MAP_PRIVATE, shmfd,
 					map_sections[i].offset) == map_sections[i].ptr);
 	}

@@ -53,4 +53,7 @@ uintptr_t child_callback (int cbhandle, uintptr_t *argv);
 void cj_callback_stub0 (void);
 void cj_callback_stub1 (void);
 
+extern int (*orig_munmap) (void *, size_t);
+extern void *(*orig_mmap) (void *, size_t, int, int, int, off_t);
+
 #endif

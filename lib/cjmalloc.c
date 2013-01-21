@@ -98,10 +98,10 @@ static void cjm_free (void *ptr)
 
 pid_t fork(void) {return -1;}
 
+void *(*orig_mmap) (void *, size_t, int, int, int, off_t) = NULL;
 void *mmap (void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
 	void *retaddr;
-	static void *(*orig_mmap) (void *, size_t, int, int, int, off_t) = NULL;
 	if (orig_mmap == NULL)
 		orig_mmap = dlsym(RTLD_NEXT, "mmap");
 
@@ -120,10 +120,10 @@ void *mmap (void *addr, size_t length, int prot, int flags, int fd, off_t offset
 	return retaddr;
 }
 
+int (*orig_munmap) (void *, size_t) = NULL;
 int munmap(void *addr, size_t length)
 {
 	int retval;
-	static int (*orig_munmap) (void *, size_t) = NULL;
 	if (orig_munmap == NULL)
 		orig_munmap = dlsym(RTLD_NEXT, "munmap");
 
